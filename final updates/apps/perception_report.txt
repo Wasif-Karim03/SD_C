@@ -1,0 +1,23 @@
+================================================================
+perception test @ 2026-08-08 13:23:52  (no motors)
+================================================================
+front camera: /dev/video0 @ 640x480
+loading Depth-Anything V2 metric model (first run may download / be slow)...
+model loaded. running ...
+
+  [  5] BLOCKED steer=+0.00 ahead= 0.7m best_col= 9 fps= 6.6
+  [ 10] BLOCKED steer=+0.00 ahead= 0.7m best_col= 9 fps= 6.5
+  [ 15] BLOCKED steer=+0.00 ahead= 0.6m best_col= 9 fps= 6.4
+  [ 20] BLOCKED steer=+0.00 ahead= 0.6m best_col= 7 fps= 6.4
+  [ 25] BLOCKED steer=+0.00 ahead= 0.7m best_col=10 fps= 6.4
+  [ 30] BLOCKED steer=+0.00 ahead= 0.7m best_col= 7 fps= 6.3
+  [ 35] BLOCKED steer=+0.00 ahead= 0.6m best_col= 7 fps= 6.2
+  [ 40] BLOCKED steer=+0.00 ahead= 0.7m best_col= 7 fps= 6.3
+
+[SUMMARY]
+   processed 40 frames
+   annotated view -> /home/wasif/Documents/Self Driving Car/final updates/apps/perception_view.jpg
+   depth heatmap  -> /home/wasif/Documents/Self Driving Car/final updates/apps/perception_depth.jpg
+
+[RESULT] Perception ran: camera -> metric depth -> free-space decision.
+         Open the two images to see the depth map + the steer/blocked call.

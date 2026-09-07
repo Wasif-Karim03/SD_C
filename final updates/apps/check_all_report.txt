@@ -1,0 +1,38 @@
+================================================================
+robocar — full equipment check @ 2026-08-08 13:14:05
+================================================================
+
+[1/8] device paths (stable identities)
+      VESC      : /dev/ttyACM0  (present)
+      Steering  : /dev/ttyUSB1  (present)
+      LiDAR     : /dev/ttyUSB0  (present)
+      GPS       : /dev/ttyTHS1  (present)
+      I2C bus   : /dev/i2c-7  (present)
+      Cam front : /dev/v4l/by-path/platform-3610000.usb-usb-0:2.1:1.0-video-index0  (present)
+      Cam rear  : /dev/v4l/by-path/platform-3610000.usb-usb-0:2.3:1.0-video-index0  (present)
+
+[2/8] cameras
+   ✅ Camera front     PASS  640x480 rot=0
+   ✅ Camera rear      PASS  640x480 rot=180
+
+[3/8] LiDAR
+   ✅ LiDAR            PASS  model 0x41 fw1.01 health=Good pts=619
+
+[4/8] compass
+   ✅ Compass          PASS  WHO_AM_I=0x10 heading=218° (raw)
+
+[5/8] OLED
+   ✅ OLED             PASS  drew test text (glance at the panel)
+
+[6/8] GPS (reading ~4s)
+   ✅ GPS              PASS  fix: 41.51648,-81.61178 sats_used=12
+
+[7/8] VESC (telemetry only — no motion)
+   ✅ VESC             PASS  fw5.2 12.2V fault=NONE
+
+[8/8] steering (link check — re-centers servo)
+   ✅ Steering         PASS  Nano link OK
+
+================================================================
+SUMMARY: 8 PASS · 0 WARN · 0 FAIL
+All systems go. 🚗

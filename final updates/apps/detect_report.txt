@@ -1,0 +1,16 @@
+========================================================
+object detection test — both cameras  15:57:40
+========================================================
+loading YOLO ...
+model: engine
+
+[FRONT]  4 objects in 2441 ms  -> /home/wasif/Documents/Self Driving Car/final updates/apps/detect_front.jpg
+    tv              70.9%
+    person          69.5% (VRU!)
+    chair           56.8%
+    laptop          55.3%
+
+[REAR]  1 objects in 26 ms  -> /home/wasif/Documents/Self Driving Car/final updates/apps/detect_rear.jpg
+    bicycle         51.4% (VRU!)
+
+[RESULT] If both saved images have boxes on the objects/people, detection works on both cameras.

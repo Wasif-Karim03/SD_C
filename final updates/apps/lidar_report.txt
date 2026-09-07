@@ -1,0 +1,31 @@
+================================================================
+RPLIDAR C1 test @ 2026-08-08 12:48:05
+================================================================
+port: /dev/serial/by-id/usb-Silicon_Labs_CP2102N_USB_to_UART_Bridge_Controller_cad4bd81365aee11899081dc8ffcc75d-if00-port0
+
+[INFO]
+   model     : 65
+   model_hex : 0x41
+   firmware  : 1.01
+   hardware  : 18
+   serial    : 734C100CF49AEBA3CD9CE4C78BE1CD98
+
+[HEALTH]
+   status   : Good (0)
+   err_code : 0
+
+[SCANS] grabbing 5 full revolutions ...
+   got 5 scans in 2.15s  (~2.3 scans/s)
+   scan 0:  592 pts  range 0.16-8.05 m  median 0.54 m  angular span 332deg
+   scan 1:  547 pts  range 0.16-4.74 m  median 0.65 m  angular span 359deg
+   scan 2:  495 pts  range 0.16-8.02 m  median 0.60 m  angular span 359deg
+   scan 3:  472 pts  range 0.16-8.02 m  median 0.60 m  angular span 359deg
+   scan 4:  413 pts  range 0.09-8.03 m  median 0.62 m  angular span 359deg
+
+[PLOT]
+  scan plot -> /home/wasif/Documents/Self Driving Car/final updates/apps/lidar_scan.png
+
+[RESULT] LiDAR is alive: info + health read, and it is spinning and
+         ranging. Open lidar_scan.png to see the room outline.
+
+lidar port released.

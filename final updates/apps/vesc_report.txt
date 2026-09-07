@@ -1,0 +1,23 @@
+================================================================
+VESC test @ 2026-08-08 13:00:18  (SPIN)
+================================================================
+port: /dev/serial/by-id/usb-STMicroelectronics_ChibiOS_RT_Virtual_COM_Port_304-if00
+
+[FIRMWARE]
+   version : 5.2   hw: 60
+
+[TELEMETRY]  (averaged over a few reads)
+   input voltage : 12.24 V
+   duty          : +0.4 %
+   motor eRPM    : 14
+   motor current : 0.00 A
+   input current : 0.00 A
+   temp FET/mot  : 31.5 / 0.0 C
+   tachometer    : 3  (abs 9639)
+   FAULT         : NONE (0)
+
+[SPIN TEST]  gentle forward ramp — WHEELS MUST BE OFF THE GROUND
+   ramped to 5% and back. peak eRPM ~ 1406
+   [RESULT] motor SPUN under command — throttle path works.
+
+VESC link closed (motor commanded to stop).

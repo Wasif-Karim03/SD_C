@@ -1,0 +1,62 @@
+================================================================
+IST8310 compass test @ 2026-08-08 12:53:32
+================================================================
+WHO_AM_I = 0x10  (expect 0x10)
+calibration: none (RAW)
+
+rotate the car SLOWLY through a full circle now — reading 12s:
+
+   X=   -12.6  Y=   -11.4  Z=    46.8 uT   heading= 222.1 deg
+   X=   -12.9  Y=   -11.4  Z=    47.4 uT   heading= 221.5 deg
+   X=   -13.8  Y=   -10.5  Z=    47.4 uT   heading= 217.3 deg
+   X=   -12.9  Y=   -11.1  Z=    48.3 uT   heading= 220.7 deg
+   X=   -12.6  Y=   -11.1  Z=    48.3 uT   heading= 221.4 deg
+   X=   -12.6  Y=   -11.4  Z=    49.5 uT   heading= 222.1 deg
+   X=   -13.5  Y=   -11.1  Z=    49.2 uT   heading= 219.4 deg
+   X=   -12.9  Y=   -11.4  Z=    48.6 uT   heading= 221.5 deg
+   X=   -12.6  Y=   -10.8  Z=    48.0 uT   heading= 220.6 deg
+   X=   -12.6  Y=   -11.4  Z=    48.3 uT   heading= 222.1 deg
+   X=   -12.6  Y=   -10.8  Z=    49.8 uT   heading= 220.6 deg
+   X=   -12.3  Y=   -11.7  Z=    48.0 uT   heading= 223.6 deg
+   X=   -12.9  Y=   -11.4  Z=    48.9 uT   heading= 221.5 deg
+   X=   -12.9  Y=   -10.8  Z=    48.3 uT   heading= 219.9 deg
+   X=   -12.9  Y=   -11.4  Z=    48.9 uT   heading= 221.5 deg
+   X=   -12.6  Y=   -11.1  Z=    46.5 uT   heading= 221.4 deg
+   X=   -12.6  Y=   -10.8  Z=    47.1 uT   heading= 220.6 deg
+   X=   -12.9  Y=   -11.1  Z=    49.2 uT   heading= 220.7 deg
+   X=   -12.6  Y=   -11.4  Z=    45.9 uT   heading= 222.1 deg
+   X=   -12.3  Y=   -12.0  Z=    48.9 uT   heading= 224.3 deg
+   X=   -12.9  Y=   -11.4  Z=    49.5 uT   heading= 221.5 deg
+   X=   -12.9  Y=   -11.4  Z=    48.3 uT   heading= 221.5 deg
+   X=   -12.6  Y=   -11.7  Z=    49.2 uT   heading= 222.9 deg
+   X=   -12.6  Y=   -10.8  Z=    48.6 uT   heading= 220.6 deg
+   X=   -12.6  Y=   -11.1  Z=    49.2 uT   heading= 221.4 deg
+   X=   -12.6  Y=   -11.4  Z=    46.5 uT   heading= 222.1 deg
+   X=   -12.9  Y=   -11.4  Z=    48.3 uT   heading= 221.5 deg
+   X=   -13.2  Y=   -10.8  Z=    48.3 uT   heading= 219.3 deg
+   X=   -13.2  Y=   -11.1  Z=    47.4 uT   heading= 220.1 deg
+   X=   -12.9  Y=   -11.4  Z=    47.7 uT   heading= 221.5 deg
+   X=   -12.3  Y=   -11.4  Z=    47.1 uT   heading= 222.8 deg
+   X=   -13.2  Y=   -11.4  Z=    48.6 uT   heading= 220.8 deg
+   X=   -12.9  Y=   -11.1  Z=    49.5 uT   heading= 220.7 deg
+   X=   -12.9  Y=   -11.7  Z=    48.0 uT   heading= 222.2 deg
+   X=   -12.9  Y=   -11.4  Z=    49.2 uT   heading= 221.5 deg
+   X=   -12.6  Y=   -11.1  Z=    48.0 uT   heading= 221.4 deg
+   X=   -12.9  Y=   -11.7  Z=    50.7 uT   heading= 222.2 deg
+   X=   -12.3  Y=   -12.3  Z=    48.3 uT   heading= 225.0 deg
+   X=   -13.2  Y=   -11.4  Z=    48.6 uT   heading= 220.8 deg
+   X=   -12.0  Y=   -11.4  Z=    47.4 uT   heading= 223.5 deg
+   X=   -13.2  Y=   -11.1  Z=    47.7 uT   heading= 220.1 deg
+   X=   -12.3  Y=   -11.4  Z=    48.0 uT   heading= 222.8 deg
+   X=   -12.9  Y=   -11.4  Z=    46.8 uT   heading= 221.5 deg
+   X=   -12.9  Y=   -11.1  Z=    47.7 uT   heading= 220.7 deg
+   X=   -12.6  Y=   -10.8  Z=    49.8 uT   heading= 220.6 deg
+   X=   -13.2  Y=   -11.4  Z=    48.9 uT   heading= 220.8 deg
+
+[SUMMARY]
+   samples        : 46
+   heading range  : 217..225 deg (swept 8 deg)
+   |X| span       : 1.8 uT
+   |Y| span       : 1.8 uT
+
+[RESULT] Compass WORKS — IST8310 confirmed and returning field data.  (Rotate the car to see the heading sweep.)

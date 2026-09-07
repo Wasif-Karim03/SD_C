@@ -1,0 +1,23 @@
+================================================================
+Steering test @ 2026-08-08 13:05:50
+================================================================
+port: /dev/ttyUSB1
+READY seen: no (older sketch? still trying)
+
+stepping through positions (watch the wheels):
+   -> center        nano: ANGLE 90
+   -> LEFT (60)     nano: ANGLE 60
+   -> center        nano: ANGLE 90
+   -> RIGHT (115)   nano: ANGLE 115
+   -> center        nano: ANGLE 90
+
+smooth sweep left<->right x2 (watch for smooth motion):
+
+centered + detached, port closed.
+
+[SUMMARY]
+   serial link + firmware: OK
+
+[RESULT] Steering link WORKS (Nano acked commands). Confirm with your
+         eyes: did the wheels go LEFT, center, RIGHT, then sweep? If the
+         servo only buzzed/twitched, its BEC/battery isn't powered.

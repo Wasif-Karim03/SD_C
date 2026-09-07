@@ -1,0 +1,41 @@
+======================================================================
+camera probe @ 2026-08-08T12:26:28
+======================================================================
+
+--- /dev/video* nodes ---
+/dev/video0, /dev/video1, /dev/video2, /dev/video3
+
+--- v4l2-ctl --list-devices (which nodes belong to which camera) ---
+NVIDIA Tegra Video Input Device (platform:tegra-camrtc-ca):
+	/dev/media0
+
+icspring camera: icspring camer (usb-3610000.usb-2.1):
+	/dev/video0
+	/dev/video1
+	/dev/media1
+
+icspring camera: icspring camer (usb-3610000.usb-2.3):
+	/dev/video2
+	/dev/video3
+	/dev/media2
+
+
+--- stable physical-port map (/dev/v4l/by-path -> videoN) ---
+  /dev/video0  <=  platform-3610000.usb-usb-0:2.1:1.0-video-index0
+  /dev/video1  <=  platform-3610000.usb-usb-0:2.1:1.0-video-index1
+  /dev/video2  <=  platform-3610000.usb-usb-0:2.3:1.0-video-index0
+  /dev/video3  <=  platform-3610000.usb-usb-0:2.3:1.0-video-index1
+
+--- opening each node + grabbing a frame ---
+  /dev/video0: CAPTURED 640x480 -> video0__platform-3610000.usb-usb-0:2.1:1.0-video-index0.jpg
+  /dev/video1: could NOT open (busy, or a metadata-only node)
+  /dev/video2: CAPTURED 640x480 -> video2__platform-3610000.usb-usb-0:2.3:1.0-video-index0.jpg
+  /dev/video3: could NOT open (busy, or a metadata-only node)
+
+--- summary ---
+  2 camera(s) produced a real image:
+    /home/wasif/Documents/Self Driving Car/robocar/apps/cam_probe/video0__platform-3610000.usb-usb-0:2.1:1.0-video-index0.jpg
+    /home/wasif/Documents/Self Driving Car/robocar/apps/cam_probe/video2__platform-3610000.usb-usb-0:2.3:1.0-video-index0.jpg
+
+If you see TWO images, both cameras work. The filename's by-path tag tells
+us which physical USB port each is on — that's how we pin front vs rear.

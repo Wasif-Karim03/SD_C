@@ -1,0 +1,30 @@
+================================================================
+LiDAR nav test @ 2026-08-08 14:17:20
+================================================================
+forward_deg=340.0  front_arc=60.0  stop=0.5m  clear=0.8m
+model 0x41 fw1.01  health=Good
+  BLOCKED nearest-ahead= 0.32m steer=+0.42 nearest@  87.6° (0.22m) pts=642
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  86.8° (0.23m) pts=381
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  92.1° (0.23m) pts=352
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  92.1° (0.23m) pts=445
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  86.7° (0.23m) pts=490
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  86.9° (0.23m) pts=479
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  85.4° (0.23m) pts=460
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  86.0° (0.23m) pts=459
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  87.7° (0.23m) pts=462
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  87.1° (0.23m) pts=467
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  87.7° (0.23m) pts=467
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  86.4° (0.23m) pts=463
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  87.6° (0.23m) pts=467
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  88.1° (0.23m) pts=464
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  93.8° (0.23m) pts=467
+  BLOCKED nearest-ahead= 0.33m steer=-0.75 nearest@  88.3° (0.23m) pts=469
+
+[SUMMARY]
+   scans processed : 376  (~46.9 Hz consumed)
+   calibration obj : densest near cluster = 29 pts around 352.9°  (of 169 in 0.3-1.5 m)
+   --> if that is your box DEAD AHEAD, set config.LIDAR_FORWARD_DEG = 353
+  plot -> /home/wasif/Documents/Self Driving Car/final updates/apps/lidar_nav_scan.png
+
+[RESULT] LiDAR path-finding is running. Use the nearest-bearing above to
+         calibrate forward, then we fuse it with the camera.

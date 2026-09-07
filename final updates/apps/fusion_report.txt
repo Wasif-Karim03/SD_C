@@ -1,0 +1,27 @@
+========================================================================
+fusion test (camera + LiDAR, no motors) @ 22:15:40
+========================================================================
+loading depth model ...
+running.
+
+  CAM[clr st-0.16 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.06 (both-clear)]
+  CAM[clr st-0.14 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.06 (both-clear)]
+  CAM[clr st-0.15 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.06 (both-clear)]
+  CAM[clr st-0.13 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.05 (both-clear)]
+  CAM[clr st-0.14 2.8m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.06 (both-clear)]
+  CAM[clr st-0.13 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.05 (both-clear)]
+  CAM[clr st-0.13 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.05 (both-clear)]
+  CAM[clr st-0.15 2.6m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.06 (both-clear)]
+  CAM[clr st-0.15 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.06 (both-clear)]
+  CAM[clr st-0.13 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.05 (both-clear)]
+  CAM[clr st-0.13 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.05 (both-clear)]
+  CAM[clr st-0.13 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.05 (both-clear)]
+  CAM[clr st-0.15 2.6m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.06 (both-clear)]
+  CAM[clr st-0.15 2.7m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.06 (both-clear)]
+  CAM[clr st-0.14 2.6m]  LIDAR[clr st+0.00 1.75m]  ->  FUSED[clear st-0.06 (both-clear)]
+
+camera view -> /home/wasif/Documents/Self Driving Car/final updates/apps/fusion_view.jpg
+lidar plot  -> /home/wasif/Documents/Self Driving Car/final updates/apps/fusion_lidar.png
+
+[RESULT] Fusion ran: camera + LiDAR -> one decision. Check that FUSED
+         blocks when EITHER sensor sees an obstacle, and steers to open space.

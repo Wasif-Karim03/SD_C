@@ -1,0 +1,852 @@
+<title>robocar — Hardware Reference</title>
+<style>
+  :root{
+    --bg:#F4F6F8; --surface:#FFFFFF; --surface-2:#EAEEF2; --surface-3:#E1E7EC;
+    --ink:#15202B; --ink-soft:#4C5B68; --ink-faint:#7A8896;
+    --line:#D5DDE4; --line-strong:#BDC8D1;
+    --accent:#B85F1E; --accent-ink:#9A5219; --accent-soft:rgba(184,95,30,.10); --accent-line:rgba(184,95,30,.35);
+    --ok:#237A57; --ok-bg:rgba(35,122,87,.12);
+    --warn:#9A6B12; --warn-bg:rgba(197,138,30,.15);
+    --crit:#B23A25; --crit-bg:rgba(178,58,37,.12);
+    --pin-pwr:#B85F1E; --pin-gnd:#4C5B68; --pin-i2c:#237A57; --pin-uart:#1F6F9A;
+    --font-sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --font-mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,"Liberation Mono",monospace;
+    --maxw:1200px; --radius:10px;
+    --shadow:0 1px 2px rgba(20,32,43,.06),0 6px 20px rgba(20,32,43,.05);
+  }
+  :root{--accent-ink:#9A5219;}
+  @media (prefers-color-scheme:dark){
+    :root{
+      --bg:#0D1117; --surface:#141C24; --surface-2:#1A2530; --surface-3:#22303C;
+      --ink:#E6EDF3; --ink-soft:#9FB0BE; --ink-faint:#6B7C8A;
+      --line:#243140; --line-strong:#32424F;
+      --accent:#E39B4A; --accent-ink:#F0B36A; --accent-soft:rgba(227,155,74,.12); --accent-line:rgba(227,155,74,.32);
+      --ok:#4FBF8F; --ok-bg:rgba(79,191,143,.14);
+      --warn:#E0B44E; --warn-bg:rgba(224,180,78,.14);
+      --crit:#E8735A; --crit-bg:rgba(232,115,90,.14);
+      --pin-pwr:#E39B4A; --pin-gnd:#8397A6; --pin-i2c:#4FBF8F; --pin-uart:#5AB0DA;
+      --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 26px rgba(0,0,0,.28);
+    }
+  }
+  :root[data-theme="light"]{
+    --bg:#F4F6F8; --surface:#FFFFFF; --surface-2:#EAEEF2; --surface-3:#E1E7EC;
+    --ink:#15202B; --ink-soft:#4C5B68; --ink-faint:#7A8896; --line:#D5DDE4; --line-strong:#BDC8D1;
+    --accent:#B85F1E; --accent-ink:#9A5219; --accent-soft:rgba(184,95,30,.10); --accent-line:rgba(184,95,30,.35);
+    --ok:#237A57; --ok-bg:rgba(35,122,87,.12); --warn:#9A6B12; --warn-bg:rgba(197,138,30,.15);
+    --crit:#B23A25; --crit-bg:rgba(178,58,37,.12);
+    --pin-pwr:#B85F1E; --pin-gnd:#4C5B68; --pin-i2c:#237A57; --pin-uart:#1F6F9A;
+    --shadow:0 1px 2px rgba(20,32,43,.06),0 6px 20px rgba(20,32,43,.05);
+  }
+  :root[data-theme="dark"]{
+    --bg:#0D1117; --surface:#141C24; --surface-2:#1A2530; --surface-3:#22303C;
+    --ink:#E6EDF3; --ink-soft:#9FB0BE; --ink-faint:#6B7C8A; --line:#243140; --line-strong:#32424F;
+    --accent:#E39B4A; --accent-ink:#F0B36A; --accent-soft:rgba(227,155,74,.12); --accent-line:rgba(227,155,74,.32);
+    --ok:#4FBF8F; --ok-bg:rgba(79,191,143,.14); --warn:#E0B44E; --warn-bg:rgba(224,180,78,.14);
+    --crit:#E8735A; --crit-bg:rgba(232,115,90,.14);
+    --pin-pwr:#E39B4A; --pin-gnd:#8397A6; --pin-i2c:#4FBF8F; --pin-uart:#5AB0DA;
+    --shadow:0 1px 2px rgba(0,0,0,.3),0 8px 26px rgba(0,0,0,.28);
+  }
+
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{animation:none!important;transition:none!important}}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--font-sans);
+    font-size:16px;line-height:1.6;-webkit-font-smoothing:antialiased;}
+  a{color:var(--accent-ink);text-underline-offset:2px}
+
+  /* ---------- layout ---------- */
+  .wrap{max-width:var(--maxw);margin:0 auto;padding:0 24px}
+  .shell{display:grid;grid-template-columns:232px minmax(0,1fr);gap:44px;
+    max-width:var(--maxw);margin:0 auto;padding:0 24px}
+  @media (max-width:920px){.shell{grid-template-columns:1fr;gap:0}.toc{display:none}}
+
+  /* ---------- hero ---------- */
+  header.hero{border-bottom:1px solid var(--line);background:
+    radial-gradient(120% 140% at 85% -20%,var(--accent-soft),transparent 60%),var(--surface);}
+  .hero-inner{max-width:var(--maxw);margin:0 auto;padding:56px 24px 44px}
+  .kicker{font-family:var(--font-mono);font-size:12px;letter-spacing:.22em;text-transform:uppercase;
+    color:var(--accent-ink);margin:0 0 18px}
+  h1{font-size:clamp(2.1rem,5vw,3.3rem);line-height:1.04;margin:0 0 14px;font-weight:800;
+    letter-spacing:-.02em;text-wrap:balance}
+  .lede{font-size:1.12rem;color:var(--ink-soft);max-width:60ch;margin:0 0 28px}
+  .chips{display:flex;flex-wrap:wrap;gap:8px}
+  .chip{font-family:var(--font-mono);font-size:12.5px;padding:5px 11px;border-radius:999px;
+    border:1px solid var(--line-strong);background:var(--surface-2);color:var(--ink-soft);
+    display:inline-flex;gap:7px;align-items:center}
+  .chip b{color:var(--ink);font-weight:600}
+
+  /* ---------- toc ---------- */
+  .toc{position:sticky;top:0;align-self:start;max-height:100vh;overflow-y:auto;
+    padding:36px 0 40px}
+  .toc h4{font-family:var(--font-mono);font-size:11px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--ink-faint);margin:0 0 12px;padding-left:12px}
+  .toc ol{list-style:none;margin:0;padding:0;counter-reset:s}
+  .toc li{counter-increment:s}
+  .toc a{display:block;padding:5px 12px;border-left:2px solid transparent;color:var(--ink-soft);
+    text-decoration:none;font-size:13.5px;transition:.15s}
+  .toc a::before{content:counter(s,decimal-leading-zero);font-family:var(--font-mono);font-size:11px;
+    color:var(--ink-faint);margin-right:9px}
+  .toc a:hover{color:var(--ink);border-color:var(--line-strong)}
+  .toc a.active{color:var(--accent-ink);border-color:var(--accent);background:var(--accent-soft)}
+
+  /* ---------- content ---------- */
+  main{padding:36px 0 90px;min-width:0}
+  section{scroll-margin-top:20px;padding:26px 0 8px;border-top:1px solid var(--line)}
+  section:first-of-type{border-top:none;padding-top:14px}
+  .eyebrow{font-family:var(--font-mono);font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;
+    color:var(--accent-ink);margin:0 0 8px;display:flex;align-items:center;gap:10px}
+  .eyebrow .num{color:var(--ink-faint)}
+  h2{font-size:1.7rem;letter-spacing:-.015em;margin:0 0 6px;font-weight:750;text-wrap:balance}
+  h3{font-size:1.12rem;margin:26px 0 8px;font-weight:680;letter-spacing:-.01em}
+  p{margin:0 0 14px;max-width:68ch}
+  .muted{color:var(--ink-soft)}
+  strong{font-weight:650}
+  code,.mono{font-family:var(--font-mono);font-size:.86em}
+  p code,li code,td code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;
+    padding:1px 5px;color:var(--ink);white-space:nowrap}
+
+  /* ---------- cards ---------- */
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px 20px;box-shadow:var(--shadow)}
+  .grid{display:grid;gap:16px}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  @media (max-width:720px){.g2,.g3,.g4{grid-template-columns:1fr}}
+
+  .inv{display:flex;flex-direction:column;gap:9px}
+  .inv .top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .inv h3{margin:0;font-size:1rem}
+  .inv .part{font-family:var(--font-mono);font-size:12px;color:var(--ink-faint)}
+  .inv p{font-size:14px;margin:0;color:var(--ink-soft)}
+  .inv .port{font-family:var(--font-mono);font-size:12.5px;color:var(--accent-ink);
+    background:var(--accent-soft);border:1px solid var(--accent-line);border-radius:6px;
+    padding:2px 8px;align-self:flex-start}
+
+  /* status pills */
+  .pill{font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:.04em;
+    padding:3px 9px;border-radius:999px;text-transform:uppercase;white-space:nowrap;border:1px solid transparent}
+  .pill.ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok)}
+  .pill.warn{color:var(--warn);background:var(--warn-bg);border-color:var(--warn)}
+  .pill.crit{color:var(--crit);background:var(--crit-bg);border-color:var(--crit)}
+
+  /* ---------- tables ---------- */
+  .twrap{overflow-x:auto;border:1px solid var(--line);border-radius:var(--radius);margin:6px 0 16px;
+    box-shadow:var(--shadow)}
+  table{border-collapse:collapse;width:100%;font-size:14px;background:var(--surface)}
+  th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:top}
+  thead th{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+    color:var(--ink-faint);background:var(--surface-2);position:sticky;top:0}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:var(--surface-2)}
+  td.m,th.m{font-family:var(--font-mono);font-size:12.5px;white-space:nowrap;font-variant-numeric:tabular-nums}
+  td.m b{color:var(--accent-ink);font-weight:600}
+
+  /* ---------- callouts ---------- */
+  .note{border-left:3px solid var(--accent);background:var(--accent-soft);border-radius:0 8px 8px 0;
+    padding:12px 16px;margin:14px 0;font-size:14.5px}
+  .note.warn{border-color:var(--warn);background:var(--warn-bg)}
+  .note.crit{border-color:var(--crit);background:var(--crit-bg)}
+  .note .lbl{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;
+    font-weight:700;display:block;margin-bottom:3px}
+  .note.warn .lbl{color:var(--warn)} .note.crit .lbl{color:var(--crit)} .note .lbl{color:var(--accent-ink)}
+
+  /* ---------- flow diagrams ---------- */
+  .flow{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:20px;background:var(--surface-2);
+    border:1px solid var(--line);border-radius:var(--radius);margin:10px 0 16px;overflow-x:auto}
+  .node{font-family:var(--font-mono);font-size:12.5px;padding:9px 13px;border-radius:8px;
+    background:var(--surface);border:1px solid var(--line-strong);white-space:nowrap;text-align:center;line-height:1.3}
+  .node small{display:block;color:var(--ink-faint);font-size:10.5px;margin-top:2px}
+  .node.sense{border-color:var(--pin-uart);box-shadow:inset 0 -2px 0 var(--pin-uart)}
+  .node.compute{border-color:var(--accent);box-shadow:inset 0 -2px 0 var(--accent)}
+  .node.act{border-color:var(--ok);box-shadow:inset 0 -2px 0 var(--ok)}
+  .node.batt{border-color:var(--crit);box-shadow:inset 0 -2px 0 var(--crit)}
+  .arrow{color:var(--ink-faint);font-family:var(--font-mono);font-size:15px;flex:0 0 auto}
+  .col{display:flex;flex-direction:column;gap:8px}
+
+  /* ---------- GPIO header ---------- */
+  .gpio-legend{display:flex;flex-wrap:wrap;gap:14px;margin:8px 0 16px;font-size:13px}
+  .gpio-legend span{display:inline-flex;align-items:center;gap:7px;font-family:var(--font-mono);font-size:12px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
+  .header-board{background:var(--surface);border:1px solid var(--line-strong);border-radius:14px;
+    padding:20px 18px;box-shadow:var(--shadow);max-width:560px}
+  .header-cap{font-family:var(--font-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--ink-faint);text-align:center;margin:0 0 14px}
+  .pins{display:grid;grid-template-columns:1fr auto 1fr;gap:5px 8px;align-items:center}
+  .pinrow{display:contents}
+  .pin{display:flex;align-items:center;gap:8px;font-family:var(--font-mono);font-size:11.5px;
+    padding:3px 6px;border-radius:6px;color:var(--ink-faint)}
+  .pin.r{flex-direction:row-reverse;text-align:right}
+  .pin .hole{width:13px;height:13px;border-radius:50%;background:var(--surface-3);
+    border:1.5px solid var(--line-strong);flex:0 0 auto}
+  .pin .no{font-variant-numeric:tabular-nums;color:var(--ink-faint);min-width:15px;text-align:center}
+  .pinmid{font-family:var(--font-mono);font-size:9px;color:var(--ink-faint);writing-mode:vertical-rl;
+    text-orientation:mixed;letter-spacing:.1em;opacity:.5}
+  .pin.used{color:var(--ink);font-weight:600}
+  .pin.used .hole{background:var(--accent);border-color:var(--accent)}
+  .pin.pwr .hole{background:var(--pin-pwr);border-color:var(--pin-pwr)}
+  .pin.gnd .hole{background:var(--pin-gnd);border-color:var(--pin-gnd)}
+  .pin.i2c .hole{background:var(--pin-i2c);border-color:var(--pin-i2c)}
+  .pin.uart .hole{background:var(--pin-uart);border-color:var(--pin-uart)}
+  .pin.used .tag{color:inherit}
+
+  /* ---------- timeline ---------- */
+  .timeline{position:relative;margin:8px 0 8px;padding-left:26px}
+  .timeline::before{content:"";position:absolute;left:7px;top:6px;bottom:6px;width:2px;background:var(--line-strong)}
+  .tl{position:relative;padding:0 0 20px 4px}
+  .tl::before{content:"";position:absolute;left:-23px;top:5px;width:11px;height:11px;border-radius:50%;
+    background:var(--accent);border:2px solid var(--surface);box-shadow:0 0 0 2px var(--accent)}
+  .tl.done::before{background:var(--ok);box-shadow:0 0 0 2px var(--ok)}
+  .tl h3{margin:0 0 3px;font-size:1.02rem}
+  .tl .when{font-family:var(--font-mono);font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint)}
+  .tl p{font-size:14px;margin:4px 0 0;color:var(--ink-soft)}
+
+  ul.clean{margin:6px 0 16px;padding-left:20px}
+  ul.clean li{margin:6px 0;max-width:66ch}
+  .footer{border-top:1px solid var(--line);margin-top:40px;padding:22px 0 0;color:var(--ink-faint);
+    font-size:13px;font-family:var(--font-mono)}
+  .split{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+  @media (max-width:760px){.split{grid-template-columns:1fr}}
+</style>
+
+<header class="hero">
+  <div class="hero-inner">
+    <p class="kicker">Hardware Reference · robocar build</p>
+    <h1>An autonomous RC car, wired end to end.</h1>
+    <p class="lede">Everything bolted to the chassis, every wire and pin, and how each part
+      actually works — from the Jetson's 40-pin header out to the motor, servo, LiDAR, and
+      GPS. This is the ground truth the software is built on.</p>
+    <div class="chips">
+      <span class="chip"><b>Jetson Orin Nano</b> Super</span>
+      <span class="chip">JetPack <b>6.2.1</b> · L4T R36.4.7</span>
+      <span class="chip">CUDA <b>12.6</b></span>
+      <span class="chip">Traxxas Slash <b>4×4</b></span>
+      <span class="chip">Power <b>MAXN_SUPER</b></span>
+      <span class="chip">Verified <b>2026-08-08</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="toc" aria-label="Contents">
+    <h4>Contents</h4>
+    <ol>
+      <li><a href="#overview">Overview</a></li>
+      <li><a href="#inventory">Component inventory</a></li>
+      <li><a href="#architecture">System architecture</a></li>
+      <li><a href="#power">Power architecture</a></li>
+      <li><a href="#gpio">The 40-pin header</a></li>
+      <li><a href="#usb">USB &amp; serial map</a></li>
+      <li><a href="#compute">Compute · Jetson</a></li>
+      <li><a href="#drive">Drive · VESC + motor</a></li>
+      <li><a href="#steering">Steering · Nano + servo</a></li>
+      <li><a href="#camera">Camera</a></li>
+      <li><a href="#lidar">LiDAR</a></li>
+      <li><a href="#gps">GPS + compass</a></li>
+      <li><a href="#oled">OLED display</a></li>
+      <li><a href="#software">Software stack</a></li>
+      <li><a href="#journey">Build journey</a></li>
+      <li><a href="#gotchas">Gotchas &amp; lessons</a></li>
+      <li><a href="#status">Where it stands</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <!-- 1 -->
+    <section id="overview">
+      <p class="eyebrow"><span class="num">01</span> Overview</p>
+      <h2>What this machine is</h2>
+      <p>The platform is a <strong>Traxxas Slash 4×4</strong> — a four-wheel-drive RC car with
+        <strong>Ackermann steering</strong> (the front wheels turn; there is no in-place rotation)
+        and a single <strong>brushless drive motor</strong>. In a stock RC car a hobby receiver
+        reads the transmitter and drives two things: the electronic speed controller and the
+        steering servo. Here, the <strong>Jetson replaces the receiver</strong> — it decides how
+        fast to go and how far to turn, and issues those two commands electronically.</p>
+      <p>Because one small computer now owns both jobs, the build splits cleanly into three worlds:
+        <strong>sensing</strong> (camera, LiDAR, GPS, compass), <strong>compute</strong> (the Jetson
+        running perception and planning), and <strong>actuation</strong> (throttle via the VESC,
+        steering via an Arduino Nano). Everything in this document falls into one of those three.</p>
+      <div class="grid g3" style="margin-top:18px">
+        <div class="card"><p class="eyebrow" style="margin:0 0 6px">Sensing</p>
+          <p class="muted" style="margin:0;font-size:14px">USB camera, RPLIDAR C1, SE100 GPS + IST8310 compass. The car's eyes and situational awareness.</p></div>
+        <div class="card"><p class="eyebrow" style="margin:0 0 6px">Compute</p>
+          <p class="muted" style="margin:0;font-size:14px">Jetson Orin Nano Super — CUDA GPU running depth perception, YOLO, and (in ROS 2) SLAM + nav2 planning.</p></div>
+        <div class="card"><p class="eyebrow" style="margin:0 0 6px">Actuation</p>
+          <p class="muted" style="margin:0;font-size:14px">VESC drives the motor; an Arduino Nano generates the steering-servo pulse. Two commands: throttle and steer.</p></div>
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section id="inventory">
+      <p class="eyebrow"><span class="num">02</span> Component inventory</p>
+      <h2>Everything added to the car</h2>
+      <p>Each item below is a physical part on the chassis, with its exact model, where it plugs in,
+        and its current state. Ports shown are the <em>stable</em> ones (resolved by device identity,
+        see §06).</p>
+      <div class="grid g2">
+        <div class="card inv">
+          <div class="top"><h3>Jetson Orin Nano</h3><span class="pill ok">Working</span></div>
+          <span class="part">Engineering Ref Dev Kit · Super</span>
+          <p>The brain. 6-core Arm CPU + 1024-core Ampere GPU, 8 GB shared RAM, CUDA 12.6.</p>
+          <span class="port">on-board compute</span>
+        </div>
+        <div class="card inv">
+          <div class="top"><h3>Drive motor + VESC</h3><span class="pill ok">Working</span></div>
+          <span class="part">Flipsky Mini FSESC 6.7 Pro · Velineon 3500</span>
+          <p>Brushless motor + field-oriented controller. Throttle &amp; live telemetry over USB.</p>
+          <span class="port">/dev/ttyACM0 · 115200</span>
+        </div>
+        <div class="card inv">
+          <div class="top"><h3>Steering</h3><span class="pill ok">Working</span></div>
+          <span class="part">Arduino Nano (CH340) → servo on D9</span>
+          <p>Generates the 50 Hz servo pulse the Jetson can't. Integer-angle serial protocol.</p>
+          <span class="port">/dev/ttyUSB1 · 115200</span>
+        </div>
+        <div class="card inv">
+          <div class="top"><h3>Camera ×2</h3><span class="pill ok">Working</span></div>
+          <span class="part">icSpring USB · 32e6:9005</span>
+          <p>YUYV 640×480, ~22 fps ceiling. Manual exposure pinned. The FPS bottleneck.</p>
+          <span class="port">/dev/video0–3 · V4L2</span>
+        </div>
+        <div class="card inv">
+          <div class="top"><h3>RPLIDAR C1</h3><span class="pill ok">Working</span></div>
+          <span class="part">Silicon Labs CP2102N bridge</span>
+          <p>360° 2D laser scanner, ~10 Hz, range to 12 m. Feeds SLAM &amp; obstacle costmaps.</p>
+          <span class="port">/dev/ttyUSB0 · 460800</span>
+        </div>
+        <div class="card inv">
+          <div class="top"><h3>GPS + compass</h3><span class="pill warn">Partial</span></div>
+          <span class="part">Radiolink SE100 (M8N + IST8310)</span>
+          <p>GPS over header UART; magnetometer over I2C. Compass needs calibration + mast mount.</p>
+          <span class="port">ttyTHS1 · 38400 &nbsp;/&nbsp; i2c-7 0x0e</span>
+        </div>
+        <div class="card inv">
+          <div class="top"><h3>OLED stats display</h3><span class="pill ok">Working</span></div>
+          <span class="part">SSD1306 128×64</span>
+          <p>At-a-glance CPU/GPU/mem/temp. Runs as a systemd service. Shares the I2C bus.</p>
+          <span class="port">i2c-7 · 0x3c</span>
+        </div>
+        <div class="card inv">
+          <div class="top"><h3>Power &amp; distribution</h3><span class="pill warn">Tethered</span></div>
+          <span class="part">3S LiPo · servo BEC · USB hubs</span>
+          <p>Motor pack feeds the VESC; servo has its own 5–6 V supply. Jetson still on a wall supply.</p>
+          <span class="port">see §04</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section id="architecture">
+      <p class="eyebrow"><span class="num">03</span> System architecture</p>
+      <h2>How data flows through the car</h2>
+      <p>Sensors stream into the Jetson; the Jetson turns that into two numbers — a steering value
+        and a throttle value — and pushes them back out to the two actuators. Everything else is
+        detail on top of this loop.</p>
+      <div class="flow">
+        <div class="col">
+          <div class="node sense">Camera<small>USB · V4L2</small></div>
+          <div class="node sense">RPLIDAR C1<small>ttyUSB0</small></div>
+          <div class="node sense">GPS + compass<small>ttyTHS1 · i2c-7</small></div>
+        </div>
+        <span class="arrow">→</span>
+        <div class="node compute">Jetson Orin Nano<small>perception · planning</small></div>
+        <span class="arrow">→</span>
+        <div class="col">
+          <div class="node act">VESC<small>ttyACM0 → motor</small></div>
+          <div class="node act">Arduino Nano<small>ttyUSB1 → servo D9</small></div>
+        </div>
+      </div>
+      <p class="muted" style="font-size:14px">Two software stacks ride on this same hardware: a lean
+        <strong>reactive</strong> path (camera → depth → steer/throttle, in <code>autonav.py</code>)
+        and a full <strong>ROS 2 + nav2</strong> path (LiDAR SLAM → map → plan → drive). They never
+        run at once, because both want to own the VESC and the steering port.</p>
+    </section>
+
+    <!-- 4 -->
+    <section id="power">
+      <p class="eyebrow"><span class="num">04</span> Power architecture</p>
+      <h2>What powers what</h2>
+      <p>The single most important power rule on this car: <strong>the motor, the servo, and the
+        Jetson each get their own supply.</strong> Sharing them causes brownouts and resets — the
+        motor's current spikes would sag the rail and reboot the computer mid-drive.</p>
+      <div class="split">
+        <div>
+          <h3>Drive rail</h3>
+          <div class="flow" style="flex-direction:column;align-items:stretch">
+            <div class="node batt">3S LiPo motor pack<small>≈ 11.1–12.6 V</small></div>
+            <span class="arrow" style="text-align:center">↓</span>
+            <div class="node act">VESC (FSESC 6.7)<small>field-oriented control</small></div>
+            <span class="arrow" style="text-align:center">↓</span>
+            <div class="node">Brushless motor<small>Velineon 3500</small></div>
+          </div>
+          <p class="muted" style="font-size:14px">The VESC's <em>logic</em> is fed from this battery,
+            not from USB — so <code>/dev/ttyACM0</code> only appears when the motor battery is on.</p>
+        </div>
+        <div>
+          <h3>Steering rail</h3>
+          <div class="flow" style="flex-direction:column;align-items:stretch">
+            <div class="node batt">Separate 5–6 V BEC<small>&gt; 1 A capable</small></div>
+            <span class="arrow" style="text-align:center">↓ (V+ / GND)</span>
+            <div class="node">Steering servo<small>signal from Nano D9</small></div>
+            <span class="arrow" style="text-align:center">↕ common ground</span>
+            <div class="node act">Arduino Nano<small>signal only</small></div>
+          </div>
+          <p class="muted" style="font-size:14px">The Nano pin provides only the <em>signal</em>. Servo
+            power must come from the BEC — never the Jetson 5 V.</p>
+        </div>
+      </div>
+      <div class="note crit"><span class="lbl">Common ground is mandatory</span>
+        Every board — VESC, Nano, servo BEC, Jetson — must share a ground reference, or the serial
+        links and the servo pulse become unreliable.</div>
+      <h3>Jetson power (mobile plan — not yet built)</h3>
+      <p>Today the Jetson runs on its wall supply (tethered). The untethered plan: a
+        <strong>separate 3S LiPo</strong> → <strong>buck-boost regulator set to 15 V, ≥ 6 A / ≥ 100 W</strong>
+        → barrel jack <strong>5.5 × 2.5 mm, centre-positive</strong> (the Jetson accepts 9–19 V, drawing
+        ~25 W peak at MAXN_SUPER). Add a <strong>10 A inline fuse</strong> and a
+        <strong>LiPo low-voltage alarm</strong> — RC LiPos have no BMS. Estimated runtime on a 3S
+        5000 mAh pack: ~1.5–2 h.</p>
+    </section>
+
+    <!-- 5 -->
+    <section id="gpio">
+      <p class="eyebrow"><span class="num">05</span> The 40-pin header</p>
+      <h2>What's wired to the Jetson's GPIO</h2>
+      <p>Only <strong>two subsystems touch the 40-pin header at all</strong>: the GPS (over the
+        header UART) and the compass + OLED (over I2C). Everything else — motor, steering, camera,
+        LiDAR — is USB. And critically: <strong>the steering servo is <em>not</em> on a Jetson GPIO
+        pin</strong>. The Jetson can't cleanly generate a stable 50 Hz servo pulse, so that job is
+        handed off to the Arduino Nano (pin D9 on the Nano, over USB). The header is used purely for
+        the SE100 module.</p>
+
+      <div class="gpio-legend">
+        <span><i class="dot" style="background:var(--pin-pwr)"></i> 5 V power</span>
+        <span><i class="dot" style="background:var(--pin-gnd)"></i> Ground</span>
+        <span><i class="dot" style="background:var(--pin-i2c)"></i> I2C (bus 7)</span>
+        <span><i class="dot" style="background:var(--pin-uart)"></i> UART (ttyTHS1)</span>
+        <span><i class="dot" style="background:var(--surface-3);border-color:var(--line-strong)"></i> unused</span>
+      </div>
+
+      <div class="header-board">
+        <p class="header-cap">Jetson Orin Nano · 40-pin header (J6)</p>
+        <div class="pins" id="pins"></div>
+      </div>
+
+      <h3>Header connections in detail</h3>
+      <div class="twrap"><table>
+        <thead><tr><th>SE100 wire</th><th>Signal</th><th class="m">Header pin</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>VCC</td><td>5 V power</td><td class="m"><b>Pin 2 / 4</b></td><td>Powers the whole SE100 module.</td></tr>
+          <tr><td>GPS&nbsp;TX</td><td>GPS → Jetson</td><td class="m"><b>Pin 10</b> · RXD</td><td><strong>Crossed.</strong> SE100 transmit lands on the Jetson's receive.</td></tr>
+          <tr><td>GPS&nbsp;RX</td><td>Jetson → GPS</td><td class="m"><b>Pin 8</b> · TXD</td><td><strong>Crossed.</strong> Swapping 8/10 = total silence.</td></tr>
+          <tr><td>SCL</td><td>compass clock</td><td class="m"><b>Pin 5</b></td><td>I2C bus 7. Shared with the OLED.</td></tr>
+          <tr><td>SDA</td><td>compass data</td><td class="m"><b>Pin 3</b></td><td>I2C bus 7. Shared with the OLED.</td></tr>
+          <tr><td>GND</td><td>ground</td><td class="m"><b>Pin 6 / 9</b></td><td>Any header ground.</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><span class="lbl">One I2C pin pair, two devices</span>
+        The header exposes exactly one I2C pair (pins 3 &amp; 5 → bus <code>/dev/i2c-7</code>). I2C is a
+        shared bus, so the compass (<code>0x0e</code>) and the OLED (<code>0x3c</code>) are spliced onto
+        the same two lines, each keeping its own VCC and GND. The UART on pins 8/10 enumerates as
+        <code>/dev/ttyTHS1</code>.</div>
+    </section>
+
+    <!-- 6 -->
+    <section id="usb">
+      <p class="eyebrow"><span class="num">06</span> USB &amp; serial map</p>
+      <h2>Every serial device, and why we resolve by identity</h2>
+      <p>Four things talk to the Jetson over USB serial: the VESC, the steering Nano, and the LiDAR
+        (plus the two cameras as video devices). The trap is that Linux names them
+        <code>ttyACM0</code>, <code>ttyUSB0</code>, <code>ttyUSB1</code> in <em>plug-in order</em> —
+        so the numbers <strong>shift</strong> whenever a device is added or replugged.</p>
+      <div class="note warn"><span class="lbl">The port-shift trap</span>
+        Adding the RPLIDAR pushed the steering Nano from <code>ttyUSB0</code> to <code>ttyUSB1</code>.
+        Any script that grabbed “the first ttyUSB” would then be sending steering commands
+        <em>to the LiDAR</em>. The fix: never address by number — resolve every device by its stable
+        <code>/dev/serial/by-id/</code> identity, which never moves.</div>
+      <div class="twrap"><table>
+        <thead><tr><th>Device</th><th class="m">USB ID</th><th>Stable identity (by-id)</th><th class="m">Current node</th><th class="m">Baud</th></tr></thead>
+        <tbody>
+          <tr><td>VESC</td><td class="m">0483:5740</td><td class="m">usb-STMicroelectronics_ChibiOS…304-if00</td><td class="m"><b>ttyACM0</b></td><td class="m">115200</td></tr>
+          <tr><td>Steering Nano</td><td class="m">1a86:7523</td><td class="m">usb-1a86_USB_Serial-if00-port0</td><td class="m"><b>ttyUSB1</b></td><td class="m">115200</td></tr>
+          <tr><td>RPLIDAR C1</td><td class="m">10c4:ea60</td><td class="m">usb-Silicon_Labs_CP2102N…cad4bd81…</td><td class="m"><b>ttyUSB0</b></td><td class="m">460800</td></tr>
+          <tr><td>Camera ×2</td><td class="m">32e6:9005</td><td>icSpring — video capture nodes</td><td class="m">video0–3</td><td class="m">—</td></tr>
+          <tr><td>GPS UART</td><td class="m">on SoC</td><td>Jetson header UART (pins 8/10)</td><td class="m"><b>ttyTHS1</b></td><td class="m">38400</td></tr>
+          <tr><td>Bluetooth</td><td class="m">13d3:3549</td><td>IMC Networks radio (on-board)</td><td class="m">—</td><td class="m">—</td></tr>
+        </tbody>
+      </table></div>
+      <p class="muted" style="font-size:14px">The USB devices hang off two Realtek hubs (a 2.0 and a
+        3.0 hub). The new <code>robocar/config/hardware.py</code> encodes exactly this table — it is the
+        single place any code looks up a port.</p>
+    </section>
+
+    <!-- 7 -->
+    <section id="compute">
+      <p class="eyebrow"><span class="num">07</span> Compute</p>
+      <h2>Jetson Orin Nano (Super)</h2>
+      <p>The whole autonomy stack runs on one board. It was verified live at the values below.</p>
+      <div class="twrap"><table>
+        <thead><tr><th>Item</th><th class="m">Value</th></tr></thead>
+        <tbody>
+          <tr><td>Board</td><td class="m">Jetson Orin Nano Engineering Ref Dev Kit — Super</td></tr>
+          <tr><td>JetPack / L4T</td><td class="m">6.2.1 · R36 (rev 4.7), Sept 2025</td></tr>
+          <tr><td>Power mode</td><td class="m">MAXN_SUPER (mode 2, maximum)</td></tr>
+          <tr><td>CUDA</td><td class="m">12.6.11</td></tr>
+          <tr><td>Python / OpenCV</td><td class="m">3.10.12 · cv2 4.5.4 (system build)</td></tr>
+          <tr><td>PyTorch</td><td class="m">2.5.0a0+…nv24.08 · CUDA available ✓</td></tr>
+          <tr><td>Memory</td><td class="m">7.4 GiB shared (CPU+GPU)</td></tr>
+          <tr><td>Cooling</td><td class="m">active fan (PWM), 9 thermal zones (cpu / gpu / soc / tj…)</td></tr>
+        </tbody>
+      </table></div>
+      <div class="note"><span class="lbl">The golden rule</span>
+        Never <code>pip install</code> generic <code>torch</code>, <code>opencv</code>, or CUDA
+        packages — they overwrite the JetPack builds and break CUDA/cv2. All Python deps go in the
+        user site (<code>~/.local</code>) with <strong>numpy pinned &lt; 2</strong>, alongside the
+        untouched system cv2.</div>
+    </section>
+
+    <!-- 8 -->
+    <section id="drive">
+      <p class="eyebrow"><span class="num">08</span> Drive</p>
+      <h2>VESC + brushless motor</h2>
+      <p>The <strong>Flipsky Mini FSESC 6.7 Pro</strong> (a VESC, hardware 6.x, firmware 5.2) drives
+        the <strong>Traxxas Velineon 3500</strong> brushless motor with field-oriented control. It
+        connects to the Jetson by USB and speaks the native VESC binary packet protocol.</p>
+      <h3>How the Jetson talks to it</h3>
+      <p>Each command is a framed packet: a start byte (<code>0x02</code> for short payloads), a length,
+        the payload (a command id + arguments), a <strong>CRC16-CCITT</strong> checksum, and a stop
+        byte (<code>0x03</code>). Key commands used:</p>
+      <div class="twrap"><table>
+        <thead><tr><th>Command</th><th class="m">ID</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td>GET_VALUES</td><td class="m">4</td><td>Live telemetry (below).</td></tr>
+          <tr><td>SET_DUTY</td><td class="m">5</td><td>Throttle as duty cycle. Clamped to ±0.95; packed as duty×100000.</td></tr>
+          <tr><td>SET_CURRENT</td><td class="m">6</td><td>Torque control; <code>0.0 A</code> = stop.</td></tr>
+          <tr><td>SET_RPM</td><td class="m">8</td><td>Closed-loop electrical RPM.</td></tr>
+          <tr><td>SET_SERVO_POS</td><td class="m">12</td><td>(Unused — VESC servo output is unreliable; see note.)</td></tr>
+        </tbody>
+      </table></div>
+      <p>Telemetry back from <code>GET_VALUES</code> includes MOSFET &amp; motor temperature, motor and
+        input current, duty, <strong>eRPM</strong>, input voltage, amp-hours, <strong>tachometer</strong>
+        (used for odometry), and a fault code.</p>
+      <h3>Motor detection &amp; calibration</h3>
+      <ul class="clean">
+        <li>Detected in VESC Tool 7.00 on a 3S LiPo: <strong>4 poles, sensorless</strong>; R = 10.4 mΩ, L = 0.68 µH, flux linkage = 0.75 mWb. Direction came out reversed and was inverted in the tool.</li>
+        <li><strong>Bench-verified:</strong> a 5 % duty ramp spun all wheels smoothly — ~2800 eRPM, ~4.6 A, 11.7 V, fault 0. Forward <em>and</em> reverse confirmed.</li>
+        <li><strong>Odometry calibration:</strong> <code>meters_per_tach = 0.003424</code> (pushed 6.8 m → Δtach 1986, ≈ 292 counts/m).</li>
+      </ul>
+      <div class="note warn"><span class="lbl">Two things to remember</span>
+        The VESC <strong>only enumerates when its motor battery is on</strong> (logic is battery-fed).
+        And it <strong>self-stops if it gets no command for ~1 s</strong> — so the controller must send
+        continuously; dropping the link makes the car coast to a stop (a safety feature, not a bug).</div>
+      <div class="note"><span class="lbl">Why steering isn't on the VESC</span>
+        The VESC has a servo output pin, but driving it needs custom-compiled firmware and is buggy
+        (erratic pulses, FOC glitches) — even Flipsky recommends an external microcontroller. Hence
+        the Arduino Nano.</div>
+    </section>
+
+    <!-- 9 -->
+    <section id="steering">
+      <p class="eyebrow"><span class="num">09</span> Steering</p>
+      <h2>Arduino Nano + servo</h2>
+      <p>An <strong>Arduino Nano clone</strong> (CH340 USB-serial chip, hence <code>ttyUSB1</code>) sits
+        between the Jetson and the steering servo. The Jetson sends an <em>angle</em> over USB; the Nano
+        turns it into the precise 50 Hz PWM pulse the servo needs, on pin <strong>D9</strong>.</p>
+      <h3>Serial protocol (115200 baud, one command per line)</h3>
+      <div class="twrap"><table>
+        <thead><tr><th class="m">Command</th><th>Action</th></tr></thead>
+        <tbody>
+          <tr><td class="m">"90"</td><td>Set angle to 90° (clamped to the safe range).</td></tr>
+          <tr><td class="m">c</td><td>Center (90°).</td></tr>
+          <tr><td class="m">d</td><td>Detach — stop pulsing so the servo relaxes (no idle buzz/heat).</td></tr>
+          <tr><td class="m">s</td><td>Sweep the full safe range and back (proves it physically moves).</td></tr>
+          <tr><td class="m">?</td><td>Print status. The Nano echoes <code>ANGLE 90</code> / <code>READY …</code> so the host can confirm.</td></tr>
+        </tbody>
+      </table></div>
+      <h3>The safe steering range (asymmetric, bench-tested)</h3>
+      <p>The wheels hit a mechanical stop well before the servo's electrical limits. Driving into that
+        stop stalls the servo — it buzzes, pulls &gt; 1 A, heats up, and can strip its gears. So every
+        command is clamped to a bench-proven range, and the linkage swings <em>further left than right</em>:</p>
+      <div class="flow" style="justify-content:center">
+        <div class="node act">60°<small>full left · norm −1</small></div>
+        <span class="arrow">—</span>
+        <div class="node compute">90°<small>center · norm 0</small></div>
+        <span class="arrow">—</span>
+        <div class="node act">115°<small>full right · norm +1</small></div>
+      </div>
+      <p class="muted" style="font-size:14px">This clamp is enforced in <strong>three places</strong> so
+        a runaway value can never reach the linkage: the firmware (<code>STEER_MIN 60 / STEER_MAX 115</code>),
+        the Python driver, and any UI. The software works in a normalized <code>−1 … +1</code> which maps
+        asymmetrically onto 60–115°.</p>
+      <div class="note warn"><span class="lbl">Servo power &amp; the CH340 fixes</span>
+        The servo draws &gt; 1 A under load — it must run from a separate 5–6 V BEC with a common ground,
+        never the Jetson (it would brown out). Two host-side fixes were needed: the Jetson kernel lacked
+        the <code>ch341</code> driver (built from source), and <code>brltty</code> had to be removed
+        because it hijacks CH340 ports.</div>
+    </section>
+
+    <!-- 10 -->
+    <section id="camera">
+      <p class="eyebrow"><span class="num">10</span> Camera</p>
+      <h2>USB vision</h2>
+      <p>Two identical <strong>icSpring USB webcams</strong> enumerate as <code>/dev/video0–3</code>
+        (each camera presents a capture node plus a metadata node). They advertise only
+        <strong>uncompressed YUYV at 640×480</strong> — no MJPG — which caps the practical frame rate
+        around <strong>18–22 fps</strong>.</p>
+      <ul class="clean">
+        <li><strong>Exposure is pinned manually.</strong> Auto-exposure was lengthening the exposure in
+          low light and dragging FPS from 15 down to 9 (the SoC stayed cool — it wasn't throttling). Fix:
+          <code>auto_exposure=1</code> (manual) + <code>exposure_time_absolute=312</code> (≈ 31 ms), set via
+          <code>v4l2-ctl</code>. Lower it (~156) to cut motion blur once the car is moving.</li>
+        <li><strong>Latest-frame-wins capture.</strong> A threaded reader keeps only the newest frame
+          (<code>BUFFERSIZE=1</code>) so perception never works on stale frames.</li>
+        <li><strong>The camera is the bottleneck, not the GPU.</strong> Depth + YOLO leave the GPU ~50 %
+          idle; a faster camera would be the single biggest perception upgrade.</li>
+      </ul>
+    </section>
+
+    <!-- 11 -->
+    <section id="lidar">
+      <p class="eyebrow"><span class="num">11</span> LiDAR</p>
+      <h2>RPLIDAR C1</h2>
+      <p>A <strong>Slamtec RPLIDAR C1</strong> — a spinning 360° 2D laser scanner — connects through a
+        <strong>Silicon Labs CP2102N</strong> USB bridge at <code>460800</code> baud (<code>ttyUSB0</code>).
+        It reports model <code>0x41</code>, firmware 1.01. A custom pure-<code>pyserial</code> driver reads
+        it — no external LiDAR library.</p>
+      <ul class="clean">
+        <li><strong>On connect, DTR is pulled low</strong> so the scanner's motor isn't held in reset.</li>
+        <li><strong>Scan data</strong> arrives as 5-byte nodes decoded to <em>(quality, angle, distance)</em>:
+          angle = <code>((b1&gt;&gt;1)|(b2&lt;&lt;7))/64</code> degrees, distance = <code>(b3|b4&lt;&lt;8)/4</code> mm.
+          Full revolutions (~10 Hz) are yielded as lists of points; range is trusted to ~12 m.</li>
+        <li><strong>In ROS 2</strong> it publishes <code>/scan</code> (LaserScan, 360 bins) — with a
+          clockwise→counter-clockwise fix to match the ROS convention — feeding SLAM and the obstacle costmaps.
+          A standalone ICP mapper also exists for lifted/hand-carried mapping.</li>
+      </ul>
+      <div class="note"><span class="lbl">This is what shifted the ports</span>
+        Because the LiDAR's CP2102N enumerated as <code>ttyUSB0</code>, it displaced the steering Nano to
+        <code>ttyUSB1</code> — the origin of the port-shift trap in §06.</div>
+    </section>
+
+    <!-- 12 -->
+    <section id="gps">
+      <p class="eyebrow"><span class="num">12</span> GPS + compass</p>
+      <h2>Radiolink SE100</h2>
+      <p>One module carries two sensors on a standard 6-pin Pixhawk connector
+        (<code>VCC, GPS-TX, GPS-RX, SCL, SDA, GND</code>): a <strong>u-blox M8N GPS</strong> and an
+        <strong>IST8310 magnetometer</strong> (compass). They wire to the Jetson header two different
+        ways — GPS over UART, compass over I2C (see §05).</p>
+      <div class="split">
+        <div>
+          <h3>GPS</h3>
+          <ul class="clean">
+            <li>NMEA sentences on <code>/dev/ttyTHS1</code> at <strong>38400</strong> baud — <em>not</em>
+              the u-blox 9600 default.</li>
+            <li>Multi-GNSS; parses GGA/RMC/GSV for fix, satellites, SNR, position.</li>
+            <li>Needs sky view: indoors shows 0 sats / status <code>V</code> (void); outdoors →
+              status <code>A</code> with a lat/lon.</li>
+          </ul>
+        </div>
+        <div>
+          <h3>Compass (IST8310)</h3>
+          <ul class="clean">
+            <li>I2C bus 7 at <code>0x0e</code>; identity check <code>WHO_AM_I(0x00) == 0x10</code>.</li>
+            <li>Read sequence: configure <code>0x41←0x24</code> (16× avg) and <code>0x42←0xC0</code>,
+              trigger a single measurement <code>0x0A←0x01</code>, poll data-ready <code>0x02</code> bit 0,
+              read 6 bytes from <code>0x03</code> (X/Y/Z, signed, ≈ 0.3 µT/LSB).</li>
+            <li>Heading = <code>atan2(Y, X)</code>, normalized 0–360°.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="note warn"><span class="lbl">The compass is the weak link</span>
+        It is currently <strong>raw/uncalibrated</strong> (needs a 360° spin calibration) and is very
+        sensitive to magnetic fields. Once the motor draws current it will corrupt headings unless the
+        SE100 is <strong>mast-mounted well away from the VESC, motor, and power wiring</strong>. This is the
+        #1 cause of bad rover compass readings.</div>
+      <div class="note crit"><span class="lbl">Power-off incident (lesson learned)</span>
+        While inserting the compass wires next to the 5 V pins, a momentary <strong>5 V/GND short</strong>
+        made the Jetson PMIC cut power to protect itself (worst under MAXN_SUPER's tight current headroom).
+        No damage — but the rule stands: <strong>power down before touching the 40-pin header</strong>.</div>
+    </section>
+
+    <!-- 13 -->
+    <section id="oled">
+      <p class="eyebrow"><span class="num">13</span> OLED display</p>
+      <h2>SSD1306 stats screen</h2>
+      <p>A small <strong>128×64 SSD1306 OLED</strong> at <code>0x3c</code> on the same I2C bus as the
+        compass shows live CPU / GPU / memory / temperature at a glance. It runs headless as a
+        <strong>systemd service</strong> (<code>oled_stats.service</code>), so it comes up on boot with no
+        login. It shares SDA/SCL with the compass without conflict — I2C is addressable, so both devices
+        coexist on the one pin pair the header provides.</p>
+    </section>
+
+    <!-- 14 -->
+    <section id="software">
+      <p class="eyebrow"><span class="num">14</span> Software stack</p>
+      <h2>What's installed on top of JetPack</h2>
+      <p>All of this lives in the user site (<code>~/.local</code>) so the system CUDA/cv2 stay intact.</p>
+      <div class="twrap"><table>
+        <thead><tr><th>Package</th><th class="m">Version</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr><td>PyTorch (Jetson build)</td><td class="m">2.5.0 · nv24.08</td><td>GPU inference. Needs cuSPARSELt to import.</td></tr>
+          <tr><td>torchvision</td><td class="m">0.20.0</td><td>Vision ops for the models.</td></tr>
+          <tr><td>cuSPARSELt</td><td class="m">0.6.3</td><td>Required — torch won't load without <code>libcusparseLt.so.0</code>.</td></tr>
+          <tr><td>numpy</td><td class="m">1.26.4</td><td>Pinned &lt; 2 — numpy 2.x breaks cv2 4.5.4.</td></tr>
+          <tr><td>Ultralytics (YOLO)</td><td class="m">8.4.72</td><td>Installed <code>--no-deps</code> so it can't shadow the system cv2.</td></tr>
+          <tr><td>TensorRT</td><td class="m">10.3</td><td>YOLO11n → FP16 engine (~29 ms vs ~41 ms in PyTorch).</td></tr>
+          <tr><td>timm</td><td class="m">—</td><td>MiDaS depth backbone.</td></tr>
+          <tr><td>transformers</td><td class="m">≥ 4.45</td><td>Depth-Anything V2 metric depth (4.44 outputs zeros).</td></tr>
+          <tr><td>onnx / onnxslim</td><td class="m">—</td><td>Model export for the TensorRT engine.</td></tr>
+          <tr><td>pyserial</td><td class="m">3.5</td><td>VESC, Nano, LiDAR, GPS serial links.</td></tr>
+          <tr><td>smbus2</td><td class="m">—</td><td>I2C for the compass + OLED.</td></tr>
+          <tr><td>arduino-cli</td><td class="m">1.5.1</td><td>Flash the Nano sketch (cores: avr, esp32).</td></tr>
+          <tr><td>ROS 2</td><td class="m">Humble</td><td>nav2 + slam_toolbox pipeline in <code>~/sdc_ws</code>.</td></tr>
+        </tbody>
+      </table></div>
+    </section>
+
+    <!-- 15 -->
+    <section id="journey">
+      <p class="eyebrow"><span class="num">15</span> Build journey</p>
+      <h2>The work done so far, in order</h2>
+      <div class="timeline">
+        <div class="tl done"><span class="when">Foundation</span><h3>Camera live-preview + exposure fix</h3>
+          <p>USB camera brought up with an alignment overlay; solved the FPS-drop by pinning manual exposure.</p></div>
+        <div class="tl done"><span class="when">Perception</span><h3>Torch / YOLO / TensorRT stack</h3>
+          <p>The careful Jetson install (torch nv24.08 + cuSPARSELt + numpy&lt;2 + ultralytics no-deps); YOLO11n exported to an FP16 TensorRT engine.</p></div>
+        <div class="tl done"><span class="when">Perception</span><h3>Class-agnostic depth avoidance</h3>
+          <p>MiDaS then Depth-Anything V2 metric depth → free-space columns → a steer offset + "blocked" flag. Depth sees walls/furniture that YOLO's 80 classes miss.</p></div>
+        <div class="tl done"><span class="when">Actuation</span><h3>Throttle via VESC</h3>
+          <p>Motor detection in VESC Tool; Python packet driver; bench-verified forward/reverse at 5 % duty, fault 0.</p></div>
+        <div class="tl done"><span class="when">Actuation</span><h3>Steering: Uno → Nano (CH340)</h3>
+          <p>Moved steering to the Arduino Nano; flashed the asymmetric 60/90/115° safe limits; built the ch341 driver, removed brltty.</p></div>
+        <div class="tl done"><span class="when">Autonomy</span><h3>autonav.py — reactive camera driving</h3>
+          <p>Depth → smoothed steer + throttle with a hard duty cap, arming, e-stop, and a dead-end recovery routine. Perception verified ~18 fps (not yet floor-tested under power).</p></div>
+        <div class="tl done"><span class="when">Control</span><h3>Web driving console</h3>
+          <p>A browser dashboard (<code>gps_web.py</code>) with a steering slider + deadman throttle lever, E-STOP/lock, plus GPS/compass/system telemetry.</p></div>
+        <div class="tl done"><span class="when">Sensing</span><h3>GPS + compass live</h3>
+          <p>SE100 wired to the header UART + I2C; NMEA fix + live heading; rotating compass dial in the dashboard.</p></div>
+        <div class="tl done"><span class="when">Infra</span><h3>Headless display fixed</h3>
+          <p>Forced a custom EDID so the desktop (and NoMachine) come up with no monitor attached.</p></div>
+        <div class="tl done"><span class="when">Pipeline</span><h3>ROS 2 stack — phases 1–4</h3>
+          <p>Sensing (LiDAR + TF + odometry), training (slam_toolbox mapping + save), drive (full nav2 with a car-like planner/controller), and a <code>/cmd_vel</code>→Ackermann vehicle node. All dry-run / stand verified.</p></div>
+        <div class="tl done"><span class="when">Sensing</span><h3>RPLIDAR C1 + SLAM</h3>
+          <p>Added the 2D LiDAR (this is what shifted the USB ports); ICP + occupancy-grid mapping.</p></div>
+        <div class="tl"><span class="when">In progress</span><h3>robocar — clean rebuild</h3>
+          <p>This organized rewrite: one source of truth for hardware, then drivers/perception/control added brick by brick. (You are here.)</p></div>
+      </div>
+    </section>
+
+    <!-- 16 -->
+    <section id="gotchas">
+      <p class="eyebrow"><span class="num">16</span> Gotchas &amp; lessons</p>
+      <h2>Hard-won rules</h2>
+      <div class="grid g2">
+        <div class="card"><h3 style="margin-top:0">Resolve serial by identity</h3><p class="muted" style="margin:0;font-size:14px">Port numbers shift on replug. Always use <code>/dev/serial/by-id/</code>.</p></div>
+        <div class="card"><h3 style="margin-top:0">VESC needs its battery</h3><p class="muted" style="margin:0;font-size:14px">No motor battery → no <code>ttyACM0</code>. Check the pack before blaming software.</p></div>
+        <div class="card"><h3 style="margin-top:0">numpy must stay &lt; 2</h3><p class="muted" style="margin:0;font-size:14px">numpy 2.x silently breaks the system OpenCV 4.5.4.</p></div>
+        <div class="card"><h3 style="margin-top:0">Servo gets its own power</h3><p class="muted" style="margin:0;font-size:14px">A BEC, not the Jetson 5 V. Always common-ground everything.</p></div>
+        <div class="card"><h3 style="margin-top:0">Keep the compass away from the motor</h3><p class="muted" style="margin:0;font-size:14px">Phase current corrupts headings — mast-mount it.</p></div>
+        <div class="card"><h3 style="margin-top:0">One VESC owner at a time</h3><p class="muted" style="margin:0;font-size:14px">autonav, the web console, and ROS all want <code>ttyACM0</code>. Never two at once.</p></div>
+        <div class="card"><h3 style="margin-top:0">Power down before touching the header</h3><p class="muted" style="margin:0;font-size:14px">A live 5 V/GND short trips the PMIC (it did once — no damage).</p></div>
+        <div class="card"><h3 style="margin-top:0">TensorRT engines are hardware-specific</h3><p class="muted" style="margin:0;font-size:14px">Rebuild <code>yolo11n.engine</code> if JetPack/TensorRT changes.</p></div>
+      </div>
+    </section>
+
+    <!-- 17 -->
+    <section id="status">
+      <p class="eyebrow"><span class="num">17</span> Where it stands</p>
+      <h2>Verified, and what's left</h2>
+      <div class="split">
+        <div>
+          <h3><span class="pill ok" style="vertical-align:middle">Working &amp; verified</span></h3>
+          <ul class="clean">
+            <li>Camera + depth perception (~18 fps)</li>
+            <li>Throttle (VESC) — forward/reverse bench-tested</li>
+            <li>Steering (Nano) — limits flashed &amp; confirmed</li>
+            <li>Web driving console with E-STOP</li>
+            <li>GPS fix + live compass heading</li>
+            <li>ROS 2 phases 1–4 (dry-run / stand)</li>
+            <li>Headless boot (no monitor needed)</li>
+          </ul>
+        </div>
+        <div>
+          <h3><span class="pill warn" style="vertical-align:middle">Still to do</span></h3>
+          <ul class="clean">
+            <li>First <strong>powered floor test</strong> of autonomy (stand → floor)</li>
+            <li>Jetson mobile power (battery + buck-boost) to cut the tether</li>
+            <li>Compass 360° calibration + mast mount</li>
+            <li>Measure the URDF sensor offsets, wheelbase &amp; max steer angle</li>
+            <li>Real drive-to-goal on a proper map (LiDAR + camera fusion)</li>
+            <li>Finish the <code>robocar</code> clean rebuild</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <div class="footer">
+      robocar · hardware reference · generated from verified live readings + build logs · 2026-08-08
+    </div>
+  </main>
+</div>
+
+<script>
+  // --- 40-pin header generator -------------------------------------------
+  // Only the pins we actually use are categorized; the rest carry their
+  // standard Jetson-header function label, dimmed.
+  const PINS = {
+    1:["3V3",""],            2:["5V","pwr"],
+    3:["I2C SDA · bus7","i2c"], 4:["5V → SE100","pwr"],
+    5:["I2C SCL · bus7","i2c"], 6:["GND","gnd"],
+    7:["GPIO",""],           8:["UART TXD → GPS RX","uart"],
+    9:["GND","gnd"],        10:["UART RXD → GPS TX","uart"],
+    11:["GPIO",""],         12:["I2S",""],
+    13:["GPIO",""],         14:["GND",""],
+    15:["GPIO",""],         16:["GPIO",""],
+    17:["3V3",""],          18:["GPIO",""],
+    19:["SPI MOSI",""],     20:["GND",""],
+    21:["SPI MISO",""],     22:["GPIO",""],
+    23:["SPI SCLK",""],     24:["SPI CS0",""],
+    25:["GND",""],          26:["SPI CS1",""],
+    27:["I2C ID SD",""],    28:["I2C ID SC",""],
+    29:["GPIO",""],         30:["GND",""],
+    31:["GPIO",""],         32:["GPIO PWM",""],
+    33:["GPIO PWM",""],     34:["GND",""],
+    35:["I2S",""],          36:["GPIO",""],
+    37:["GPIO",""],         38:["I2S",""],
+    39:["GND",""],          40:["I2S",""]
+  };
+  const host = document.getElementById("pins");
+  if (host){
+    for (let i=1;i<=40;i+=2){
+      const row=document.createElement("div"); row.className="pinrow";
+      const L=makePin(i,false), M=document.createElement("div"),
+            R=makePin(i+1,true);
+      M.className="pinmid"; M.textContent = (i<=11? "":"");
+      row.appendChild(L); row.appendChild(i===1?labelMid():spacer()); row.appendChild(R);
+      host.appendChild(row);
+    }
+  }
+  function spacer(){const s=document.createElement("div");s.style.width="10px";return s;}
+  function labelMid(){const s=document.createElement("div");s.className="pinmid";s.textContent="J6";return s;}
+  function makePin(n,right){
+    const [label,cat]=PINS[n];
+    const el=document.createElement("div");
+    el.className="pin"+(right?" r":"")+(cat?(" used "+cat):"");
+    const hole=document.createElement("span"); hole.className="hole";
+    const no=document.createElement("span"); no.className="no"; no.textContent=n;
+    const tag=document.createElement("span"); tag.className="tag"; tag.textContent=label;
+    if(right){ el.appendChild(tag); el.appendChild(no); el.appendChild(hole); }
+    else     { el.appendChild(hole); el.appendChild(no); el.appendChild(tag); }
+    return el;
+  }
+
+  // --- TOC scroll-spy -----------------------------------------------------
+  const links=[...document.querySelectorAll(".toc a")];
+  const map=new Map(links.map(a=>[a.getAttribute("href").slice(1),a]));
+  const obs=new IntersectionObserver((es)=>{
+    es.forEach(e=>{ if(e.isIntersecting){
+      links.forEach(l=>l.classList.remove("active"));
+      const a=map.get(e.target.id); if(a)a.classList.add("active");
+    }});
+  },{rootMargin:"-10% 0px -80% 0px",threshold:0});
+  document.querySelectorAll("section[id]").forEach(s=>obs.observe(s));
+</script>

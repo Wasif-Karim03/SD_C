@@ -1,0 +1,13 @@
+# Python dependencies for oled_stats.py
+#
+# luma.oled pulls in luma.core, Pillow (PIL) and smbus2 automatically.
+# psutil is used for the CPU% fallback (and for CPU% in general).
+#
+# jetson-stats (the `jtop` API) is intentionally NOT listed here because it
+# must be installed system-wide with sudo and is Jetson-specific:
+#     sudo pip3 install -U jetson-stats   (then reboot)
+# The script runs fine without it, using psutil + sysfs fallbacks.
+
+luma.oled>=3.8.1
+Pillow>=9.0.0
+psutil>=5.9.0
