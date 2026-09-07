@@ -123,6 +123,8 @@ class Hub:
         self.loc = None
         self.last_scan = None
         self.last_scan_t = 0.0          # when last_scan arrived (staleness guard)
+        self.near_m = None               # nearest obstacle ahead, metres
+        self.loop_ms = None              # measured control-loop period
 
         # frame buffers (jpeg bytes)
         self.front_jpg = _placeholder("FRONT CAMERA")
@@ -305,6 +307,13 @@ class Hub:
             if scan and age < 1.0:
                 self.last_scan = scan
                 self.last_scan_t = time.monotonic()
+                # Nearest obstacle ahead, published for the UI's clearance tile. Computed
+                # here (once per scan) rather than in the follow loop, so it is available
+                # in every mode and never derives from a scan the UI can't age-check.
+                try:
+                    self.near_m = self.nav.plan(scan)["nearest_ahead_m"]
+                except Exception:
+                    self.near_m = None
                 if self.mode == "map" and self.slam is not None:
                     self.slam.add_scan(scan)
                 if self.mode == "navigate" and self.loc is not None:
@@ -458,8 +467,15 @@ class Hub:
     # ------------------------------------------------------------------ #
     def _actuator_loop(self):
         duty = 0.0
+        prev = None
         while self.running:
             now = time.monotonic()
+            if prev is not None:
+                # EMA of the real loop period, so the UI can show latency rather than
+                # the operator having to assume it.
+                dt = (now - prev) * 1000.0
+                self.loop_ms = dt if self.loop_ms is None else 0.8 * self.loop_ms + 0.2 * dt
+            prev = now
             with C_LOCK:
                 estop = CTRL["estop"]; armed = CTRL["armed"]
                 target = CTRL["throttle"]
@@ -643,7 +659,15 @@ class Hub:
                     pose = STATE.get("pose")
                 if pose:
                     heading = round((math.degrees(pose[2]) + 360) % 360, 0)
+            scan_age = None
+            if self.last_scan_t:
+                scan_age = round(time.monotonic() - self.last_scan_t, 2)
             with S_LOCK:
+                STATE["scan_age"] = scan_age
+                STATE["near"] = (round(self.near_m, 2)
+                                 if isinstance(self.near_m, float) and self.near_m != float("inf")
+                                 else None)
+                STATE["loop_ms"] = round(self.loop_ms, 1) if self.loop_ms else None
                 STATE["mode"] = self.mode
                 STATE["env"] = self.env
                 STATE["rear_on"] = self.rear_on
@@ -692,376 +716,929 @@ HUB = None
 
 PAGE = r"""<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>RoboCar — Mission Control</title>
+<title>RoboCar Cockpit</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
- :root{--bg:#0a0e12;--panel:#0e141a;--edge:#17242c;--edge2:#22333d;
-   --ac:#5fd3bc;--dim:#3f5563;--txt:#dfe8ee;--amber:#f0a020;--red:#ff5c5c;--ok:#39d98a}
- *{box-sizing:border-box}
- body{margin:0;background:var(--bg);color:var(--txt);
-   font-family:ui-sans-serif,system-ui,"Segoe UI",sans-serif;
-   background-image:linear-gradient(rgba(30,50,60,.05) 1px,transparent 1px),
-     linear-gradient(90deg,rgba(30,50,60,.05) 1px,transparent 1px);
-   background-size:26px 26px}
- .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
- header{display:flex;align-items:center;gap:16px;padding:9px 16px;
-   border-bottom:1px solid var(--edge);background:#0b1116}
- .brand{font-weight:800;letter-spacing:3px;color:var(--txt);white-space:nowrap}
- .brand b{color:var(--ac)}
- .tabs{display:flex;gap:4px}
- .tab{font-size:.72rem;letter-spacing:2px;padding:7px 12px;border:1px solid var(--edge2);
-   background:#0c141a;color:var(--dim);cursor:pointer;border-radius:3px;font-family:ui-monospace,monospace}
- .tab:hover{color:var(--ac);border-color:#2d4550}
- .tab.on{color:#031014;background:var(--ac);border-color:var(--ac);font-weight:700}
- .pills{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
- .pill{font-size:.62rem;letter-spacing:1.5px;padding:4px 8px;border:1px solid var(--edge2);
-   border-radius:3px;color:var(--dim);font-family:ui-monospace,monospace}
- .pill.on{color:var(--ok);border-color:#1f5a44;box-shadow:inset 0 0 8px rgba(57,217,138,.12)}
- .pill.warn{color:var(--amber);border-color:#5a4410}
- #estop{background:#7a1410;color:#fff;border:1px solid #b3261e;font-weight:800;
-   letter-spacing:2px;padding:9px 16px;border-radius:4px;cursor:pointer}
- #estop.latched{animation:blink 1s steps(2) infinite}
- #clearstop{background:#3a2a0c;color:#ffe6b0;border:1px solid #7a5a12;font-weight:700;
-   letter-spacing:1.5px;padding:9px 14px;border-radius:4px;cursor:pointer;
-   font-family:ui-monospace,monospace;font-size:.72rem}
- #clearstop:hover{border-color:var(--amber)}
- @keyframes blink{50%{background:#b3261e}}
- .grid{display:grid;grid-template-columns:minmax(300px,1.05fr) minmax(320px,1.25fr) minmax(280px,1fr);
-   gap:12px;padding:12px}
- @media(max-width:1100px){.grid{grid-template-columns:1fr}}
- .col{display:flex;flex-direction:column;gap:12px;min-width:0}
- .panel{background:var(--panel);border:1px solid var(--edge);border-radius:6px;
-   display:flex;flex-direction:column;overflow:hidden}
- .phead{display:flex;align-items:center;justify-content:space-between;padding:7px 10px;
-   border-bottom:1px solid var(--edge);background:#0b1218}
- .ptitle{font-size:.66rem;letter-spacing:2.5px;color:var(--ac)}
- .pbody{padding:10px;position:relative}
- .exp{background:none;border:1px solid var(--edge2);color:var(--dim);border-radius:3px;
-   cursor:pointer;font-size:.7rem;padding:2px 7px;line-height:1}
- .exp:hover{color:var(--ac);border-color:#2d4550}
- .panel.full{position:fixed;inset:0;z-index:60;border-radius:0}
- .panel.full .pbody{flex:1;display:flex;align-items:center;justify-content:center;overflow:auto}
- .feed{display:block;width:100%;border-radius:3px;background:#05080b}
- .panel.full .feed,.panel.full canvas{width:auto;max-width:100%;max-height:100%}
- canvas{display:block;width:100%;background:#05080b;border-radius:3px}
- .map{cursor:crosshair}
- .btn{background:#12202a;color:var(--txt);border:1px solid var(--edge2);border-radius:4px;
-   padding:8px 12px;font-size:.8rem;cursor:pointer;font-family:ui-monospace,monospace;letter-spacing:1px}
- .btn:hover{border-color:var(--ac)}
- .btn.go{background:#0f3a26;border-color:#2f7d57;color:#c9ffe6}
- .btn.warn{background:#3a2a0c;border-color:#7a5a12;color:#ffe6b0}
- .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
- .seg{display:flex;border:1px solid var(--edge2);border-radius:4px;overflow:hidden}
- .seg button{background:#0c141a;color:var(--dim);border:0;padding:7px 12px;cursor:pointer;
-   font-family:ui-monospace,monospace;font-size:.72rem;letter-spacing:1px}
- .seg button.on{background:var(--ac);color:#03110d;font-weight:700}
- .lab{font-size:.6rem;letter-spacing:2px;color:var(--dim);margin-bottom:4px}
- .tele{display:grid;grid-template-columns:1fr 1fr;gap:8px}
- .cell{background:#0b1218;border:1px solid var(--edge);border-radius:4px;padding:8px}
- .cell .v{font-size:1.5rem;font-family:ui-monospace,monospace;color:var(--ac);line-height:1.1}
- .cell .u{font-size:.6rem;color:var(--dim);letter-spacing:1px}
- .bar{height:6px;background:#0a1218;border:1px solid var(--edge);border-radius:3px;margin-top:5px;overflow:hidden}
- .bar>i{display:block;height:100%;background:var(--ac)}
- input[type=range]{width:100%;accent-color:var(--ac)}
- .status{font-family:ui-monospace,monospace;font-size:.72rem;color:#9fb6c0;padding:6px 2px}
- .det{font-family:ui-monospace,monospace;font-size:.72rem;max-height:150px;overflow:auto}
- .det .d{display:flex;justify-content:space-between;padding:3px 6px;border-bottom:1px solid #101a20}
- .det .vru{color:var(--red)} .hide{display:none}
- .hint{font-size:.66rem;color:var(--dim);letter-spacing:.5px}
- .khint{font-size:.64rem;color:var(--dim);letter-spacing:.4px;margin-top:8px;
-   border-top:1px solid var(--edge);padding-top:7px}
- .khint b{color:var(--ac);font-family:ui-monospace,monospace}
- .pad{display:grid;grid-template-columns:1fr 1.3fr 1fr;grid-template-rows:auto auto auto;
-   grid-template-areas:". u ." "l c r" ". d .";gap:6px;margin-top:10px;align-items:stretch}
- .padbtn{font-size:1.2rem;padding:14px 0;border-radius:6px;cursor:pointer;user-select:none;
-   background:#12202a;color:var(--txt);border:1px solid var(--edge2)}
- .padbtn:hover{border-color:var(--ac)}
- .padbtn.go{background:#0f3a26;border-color:#2f7d57;color:#c9ffe6}
- .padbtn.act{background:var(--ac);color:#03110d;border-color:var(--ac)}
- .padc{grid-area:c;display:flex;flex-direction:column;align-items:center;justify-content:center;
-   font-family:ui-monospace,monospace;font-size:.72rem;color:var(--ac);
-   background:#0a1218;border:1px solid var(--edge);border-radius:6px;line-height:1.5}
-</style></head><body>
-<header>
- <div class=brand>◆ ROBO<b>CAR</b> // MISSION CONTROL</div>
- <div class=tabs id=tabs>
-   <div class=tab data-m=drive>DRIVE</div>
-   <div class=tab data-m=map>MAP</div>
-   <div class=tab data-m=navigate>NAVIGATE</div>
-   <div class=tab data-m=perception>PERCEPTION</div>
- </div>
- <div class=pills id=pills>
-   <span class=pill id=p_lidar>LIDAR</span>
-   <span class=pill id=p_vesc>VESC</span>
-   <span class=pill id=p_steer>STEER</span>
-   <span class=pill id=p_cam>CAM</span>
-   <span class=pill id=p_det>DET</span>
-   <span class=pill id=p_loc>LOC</span>
- </div>
- <button id=clearstop class=hide>↺ CLEAR E-STOP</button>
- <button id=estop>■ E-STOP</button>
-</header>
+/* ═══ OPERATING PALETTE — per RoboCar HMI Style Guide §2 ══════════════════
+   Colour appears only for abnormal conditions. Everything nominal is neutral. */
+:root{
+  --g:#e4e6e4; --s:#eff1ef; --s2:#e9ebe8;
+  --struct:#a8ada8; --hair:#c6cbc5;
+  --t1:#1a1f1d; --t2:#5a625e; --t3:#7d857f;
+  --val:#2e3a44;
+  --caution:#a8620a; --alarm:#b0231b; --override:#7a3f8a;
+  --caution-f:#f4e3cb; --alarm-f:#f6dcd9;
+  --estop-face:#b0231b; --estop-ring:#d8b400;
+  --sel-bg:#1a1f1d; --sel-fg:#e4e6e4;
+  --scene:#dcdfdb;
+}
+:root[data-hmi="night"]{
+  --g:#14181a; --s:#1c2226; --s2:#191f22;
+  --struct:#4a5559; --hair:#2b3438;
+  --t1:#dee4e2; --t2:#94a3a3; --t3:#778586;
+  --val:#c3d2da;
+  --caution:#e0a53c; --alarm:#ff6b6b; --override:#c08bd4;
+  --caution-f:#2e2410; --alarm-f:#33191a;
+  --estop-face:#c22b21; --estop-ring:#d8b400;
+  --sel-bg:#dee4e2; --sel-fg:#14181a;
+  --scene:#101517;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--g);color:var(--t1);
+  font-family:"IBM Plex Sans",system-ui,sans-serif;font-size:14px;line-height:1.45;
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+.num,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  font-variant-numeric:tabular-nums lining-nums slashed-zero;
+  font-variant-ligatures:none}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer}
+button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--t1);outline-offset:2px}
+:root[data-hmi="night"] button:focus-visible{outline-color:var(--t1)}
+.lab{font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.15em;
+  text-transform:uppercase;color:var(--t2)}
 
-<div class=grid>
- <!-- LEFT: cameras + detections -->
- <div class=col>
-   <div class=panel><div class=phead><span class=ptitle>FRONT CAMERA</span>
-     <button class=exp data-t=pf>⤢</button></div>
-     <div class=pbody id=pf><img class=feed id=frontcam src="/cam/front.mjpg" alt=front></div></div>
-   <div class=panel><div class=phead><span class=ptitle>REAR CAMERA</span>
-     <div class=row><button class=btn id=rearbtn style="padding:3px 8px;font-size:.66rem">ENABLE</button>
-       <button class=exp data-t=pr>⤢</button></div></div>
-     <div class=pbody id=pr><img class=feed id=rearcam alt=rear></div></div>
-   <div class=panel id=detpanel><div class=phead><span class=ptitle>DETECTIONS</span></div>
-     <div class=pbody><div class=det id=dets><div class=hint>enter PERCEPTION mode to run object detection</div></div></div></div>
- </div>
+/* ═══ SHELL ═══ */
+.shell{height:100vh;display:grid;grid-template-rows:auto auto 1fr auto;
+  background:var(--hair);gap:1px}
 
- <!-- CENTER: map + context controls -->
- <div class=col>
-   <div class=panel><div class=phead><span class=ptitle id=maptitle>LIDAR RADAR</span>
-     <button class=exp data-t=pm>⤢</button></div>
-     <div class=pbody id=pm><img class="feed map" id=mapimg src="/map.jpg" alt=map></div></div>
-   <div class=panel><div class=phead><span class=ptitle>MODE CONTROL</span></div>
-     <div class=pbody>
-       <div id=ctx_drive class=hint>Manual driving. Use the DRIVE panel on the right. Live LiDAR radar above.</div>
-       <div id=ctx_map class=hide>
-         <div class=row><button class="btn go" id=savemap>💾 SAVE MAP</button>
-           <span class=status id=mapinfo>drive slowly — scans overlap = clean map</span></div>
-         <div class=khint>Drive while it maps: hold <b>W</b>/<b>S</b> to move, <b>A</b>/<b>D</b> to steer,
-           <b>SPACE</b> to stop. First press auto-enables driving. (Full pad on the right →)</div></div>
-       <div id=ctx_nav class=hide>
-         <div class=row><button class="btn go" id=gobtn>▶ GO (drive route)</button>
-           <button class="btn warn" id=stopbtn>■ STOP</button></div>
-         <div class=status id=navinfo>click a point on the map to set a destination</div></div>
-       <div id=ctx_perc class=hide class=hint>Object detection is running on the front camera. Enable the rear camera to detect behind too.</div>
-       <div class=status id=status></div>
-     </div></div>
- </div>
+/* ═══ STATUS BAR — persistent, every mode ═══ */
+.bar{background:var(--s);display:flex;align-items:stretch;gap:1px;min-height:56px}
+.bar>*{display:flex;align-items:center}
+.brand{padding:0 16px;font-family:Archivo,sans-serif;font-weight:700;font-size:15px;
+  letter-spacing:.02em;gap:9px;border-right:1px solid var(--hair)}
+.brand .dot{width:7px;height:7px;background:var(--t1);border-radius:50%}
 
- <!-- RIGHT: 3D view + telemetry + env + drive -->
- <div class=col>
-   <div class=panel><div class=phead><span class=ptitle>3D LIDAR VIEW</span>
-     <button class=exp data-t=p3>⤢</button></div>
-     <div class=pbody id=p3><canvas id=view3d width=380 height=300></canvas></div></div>
-   <div class=panel><div class=phead><span class=ptitle>TELEMETRY</span></div>
-     <div class=pbody>
-       <div class=tele>
-         <div class=cell><div class=lab>SPEED</div><div class=v id=t_speed>0.00</div><div class=u>M/S</div></div>
-         <div class=cell><div class=lab>DUTY</div><div class=v id=t_duty>0</div><div class=u>%</div>
-           <div class=bar><i id=t_dutybar style=width:0%></i></div></div>
-         <div class=cell><div class=lab>HEADING</div><div class=v id=t_head>—</div><div class=u>DEG</div></div>
-         <div class=cell><div class=lab>BATTERY</div><div class=v id=t_volt>—</div><div class=u>V IN</div>
-           <div class=bar><i id=t_voltbar style=width:0%></i></div></div>
-         <div class=cell><div class=lab>MOS TEMP</div><div class=v id=t_tmos>—</div><div class=u>°C</div></div>
-         <div class=cell><div class=lab>FAULT</div><div class=v id=t_fault style=font-size:.9rem;padding-top:8px>—</div></div>
-       </div>
-     </div></div>
-   <div class=panel><div class=phead><span class=ptitle>ENVIRONMENT</span></div>
-     <div class=pbody><div class=seg id=envseg>
-       <button data-e=indoor class=on>INDOOR</button><button data-e=outdoor>OUTDOOR</button></div>
-       <div class=hint style=margin-top:6px>sets auto-drive speed &amp; caution profile</div></div></div>
-   <div class=panel><div class=phead><span class=ptitle>MANUAL DRIVE</span>
-     <span class=pill id=armpill>DISARMED</span></div>
-     <div class=pbody>
-       <div class=row><button class=btn id=armbtn>⏻ ENABLE DRIVING</button>
-         <span class=hint>speed <b id=lvl>6</b>%</span>
-         <button class=btn id=lvlm style=padding:6px 10px>−</button>
-         <button class=btn id=lvlp style=padding:6px 10px>+</button></div>
-       <div class=pad>
-         <button class="padbtn go" id=fwd style=grid-area:u>▲</button>
-         <button class="padbtn" id=left style=grid-area:l>◄</button>
-         <div class=padc id=padc><div id=thrLED>THR 0%</div><div id=steLED>STEER 0.0</div></div>
-         <button class="padbtn" id=right style=grid-area:r>►</button>
-         <button class="padbtn go" id=rev style=grid-area:d>▼</button></div>
-       <div style=margin-top:8px><div class=lab>STEERING TRIM</div>
-         <input type=range id=steer min=-1 max=1 step=0.02 value=0></div>
-       <div class=khint id=khint>⌨ hold <b>W</b>/<b>S</b> drive · <b>A</b>/<b>D</b> steer (springs back) · <b>SPACE</b> = E-STOP</div>
-     </div></div>
- </div>
+/* autonomy enum — named states, never a boolean */
+.auto{padding:0 14px;gap:2px;border-right:1px solid var(--hair)}
+.auto .seg{display:flex;border:1px solid var(--struct)}
+.auto .seg button{padding:6px 11px;font-family:"IBM Plex Mono",monospace;font-size:10px;
+  letter-spacing:.1em;color:var(--t2);min-height:30px}
+.auto .seg button[aria-pressed="true"]{background:var(--sel-bg);color:var(--sel-fg);font-weight:600}
+.auto .seg button.ov[aria-pressed="true"]{background:var(--override);color:#fff}
+
+/* the one top-level state word */
+.state{padding:0 18px;gap:11px;border-right:1px solid var(--hair);min-width:230px}
+.state .gl{font-size:15px;line-height:1}
+.state .w{font-family:Archivo,sans-serif;font-weight:700;font-size:17px;letter-spacing:.03em}
+.state .sub{font-size:10.5px;color:var(--t2);line-height:1.25}
+.state.caution{color:var(--caution)} .state.alarm{color:var(--alarm)}
+.state.caution .sub,.state.alarm .sub{color:inherit;opacity:.85}
+
+/* subsystem chips — redundant coding: glyph + text + border */
+.chips{flex:1;padding:0 12px;gap:6px;flex-wrap:wrap;min-width:0}
+.chip{display:inline-flex;align-items:center;gap:5px;padding:4px 8px;min-height:26px;
+  border:1px solid var(--struct);font-family:"IBM Plex Mono",monospace;font-size:9.5px;
+  letter-spacing:.07em;color:var(--t2);white-space:nowrap}
+.chip .gl{font-size:10px;line-height:1}
+.chip.caution{border-color:var(--caution);color:var(--caution);background:var(--caution-f)}
+.chip.alarm{border-color:var(--alarm);color:var(--alarm);background:var(--alarm-f);border-width:2px}
+.chip.stale{border-style:dashed;color:var(--t3)}
+
+.barR{gap:1px;border-left:1px solid var(--hair)}
+.themebtn{padding:0 13px;font-family:"IBM Plex Mono",monospace;font-size:9.5px;
+  letter-spacing:.11em;color:var(--t2);align-self:stretch}
+.themebtn:hover{color:var(--t1)}
+
+/* E-STOP — ISO 13850. Red on yellow, reserved. Never shrouded. */
+.estopwrap{align-self:stretch;display:flex;flex-direction:column;justify-content:center;
+  background:var(--estop-ring);padding:5px 6px;gap:3px}
+.estop{background:var(--estop-face);color:#fff;font-family:Archivo,sans-serif;font-weight:700;
+  font-size:13px;letter-spacing:.11em;padding:9px 22px;min-height:40px;min-width:150px;
+  border:2px solid #7d1712}
+.estop:hover{background:#8f1c15}
+.estop.latched{animation:estopblink 1s steps(2) infinite}
+@keyframes estopblink{50%{background:#7d1712}}
+.span{font-family:"IBM Plex Mono",monospace;font-size:7.5px;letter-spacing:.08em;
+  color:#4a3d00;text-align:center;line-height:1.2}
+.clearbtn{background:var(--s);border:2px solid var(--caution);color:var(--caution);
+  font-family:Archivo,sans-serif;font-weight:700;font-size:11px;letter-spacing:.09em;
+  padding:8px 14px;min-height:38px;align-self:stretch;margin:5px 0}
+
+/* ═══ PRE-ARM STRIP ═══ */
+.prearm{background:var(--caution-f);color:var(--caution);border-top:1px solid var(--caution);
+  padding:8px 16px;display:flex;align-items:center;gap:12px;font-family:"IBM Plex Mono",monospace;
+  font-size:12px}
+.prearm.clear{background:var(--s);color:var(--t2);border-top-color:var(--hair)}
+.prearm .tag{font-size:9px;letter-spacing:.14em;border:1px solid currentColor;padding:2px 6px}
+.prearm .more{margin-left:auto;font-size:10px;opacity:.8}
+
+/* ═══ BODY ═══ */
+.body{display:grid;grid-template-columns:52px 1fr 306px;gap:1px;min-height:0}
+@media(max-width:900px){
+  .body{grid-template-columns:52px 1fr}
+  .side{display:none}
+}
+
+/* mode rail — vertical, task-named */
+.rail{background:var(--s);display:flex;flex-direction:column;gap:1px}
+.rail button{writing-mode:vertical-rl;transform:rotate(180deg);padding:16px 0;flex:1;
+  font-family:"IBM Plex Mono",monospace;font-size:10px;letter-spacing:.18em;color:var(--t2);
+  border-right:2px solid transparent}
+.rail button[aria-pressed="true"]{background:var(--sel-bg);color:var(--sel-fg);font-weight:600}
+.rail button:hover:not([aria-pressed="true"]){background:var(--s2);color:var(--t1)}
+
+/* scene */
+.stage{background:var(--scene);position:relative;min-height:0;display:flex;flex-direction:column}
+.stage canvas,.stage img{flex:1;width:100%;min-height:0;object-fit:contain;display:block}
+.stagehead{position:absolute;top:0;left:0;right:0;display:flex;align-items:center;gap:10px;
+  padding:9px 13px;pointer-events:none}
+.stagehead .t{font-family:Archivo,sans-serif;font-weight:600;font-size:11px;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--t2)}
+.stagefoot{display:flex;align-items:center;gap:14px;padding:7px 13px;background:var(--s);
+  border-top:1px solid var(--hair);flex-wrap:wrap}
+.stagefoot .m{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--t2);
+  font-variant-numeric:tabular-nums;display:flex;gap:5px;align-items:baseline}
+.stagefoot .m b{color:var(--t1);font-weight:500}
+.stagefoot .m.stale b{color:var(--caution)}
+.hint{margin-left:auto;font-size:10.5px;color:var(--t3)}
+/* camera PiP — one big spatial view, one demotable inset (QGC convention) */
+.pip{position:absolute;right:11px;bottom:52px;width:212px;border:1px solid var(--struct);
+  background:var(--scene);display:flex;flex-direction:column}
+.pip.hidden{display:none}
+.pip img{width:100%;display:block;aspect-ratio:4/3;object-fit:cover;background:var(--s2)}
+.pip .ph{display:flex;align-items:center;gap:6px;padding:4px 7px;background:var(--s);
+  border-bottom:1px solid var(--hair)}
+.pip .ph span{font-family:"IBM Plex Mono",monospace;font-size:8.5px;letter-spacing:.13em;
+  color:var(--t2)}
+.pip .ph button{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:8.5px;
+  letter-spacing:.1em;color:var(--t2);padding:2px 5px;border:1px solid var(--struct);min-height:20px}
+.pip .ph button:hover{color:var(--t1);border-color:var(--t1)}
+.camtoggle{position:absolute;right:11px;bottom:52px;font-family:"IBM Plex Mono",monospace;
+  font-size:9.5px;letter-spacing:.11em;color:var(--t2);border:1px solid var(--struct);
+  background:var(--s);padding:6px 10px;min-height:30px}
+.camtoggle.hidden{display:none}
+
+/* contextual action row — changes with the task */
+.act{display:flex;gap:6px;margin-bottom:11px;flex-wrap:wrap}
+.act button{flex:1;border:1px solid var(--struct);min-height:40px;padding:0 12px;
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.1em;color:var(--t1)}
+.act button:hover{border-color:var(--t1)}
+.act .note{width:100%;font-size:10px;color:var(--t2);font-family:"IBM Plex Mono",monospace}
+.act .note.ok{color:var(--t1)}
+.seg2{display:flex;border:1px solid var(--struct);width:100%}
+.seg2 button{flex:1;border:0;padding:8px 0;font-family:"IBM Plex Mono",monospace;font-size:10px;
+  letter-spacing:.1em;color:var(--t2);min-height:34px}
+.seg2 button[aria-pressed="true"]{background:var(--sel-bg);color:var(--sel-fg);font-weight:600}
+
+/* detections — VRU classes get caution, nothing else is coloured */
+.dets{border:1px solid var(--hair);max-height:168px;overflow-y:auto}
+.dets .d{display:flex;justify-content:space-between;gap:8px;padding:5px 9px;
+  border-bottom:1px solid var(--hair);font-family:"IBM Plex Mono",monospace;font-size:10.5px;
+  color:var(--t2)}
+.dets .d:last-child{border-bottom:0}
+.dets .d b{color:var(--t1);font-weight:500}
+.dets .d.vru{color:var(--caution);background:var(--caution-f)}
+.dets .d.vru b{color:var(--caution)}
+.dets .empty{padding:9px;font-size:10.5px;color:var(--t3)}
+
+/* ═══ SIDE COLUMN ═══ */
+.side{background:var(--s);display:flex;flex-direction:column;gap:1px;overflow-y:auto;
+  background:var(--hair)}
+.blk{background:var(--s);padding:12px 13px}
+.blkhead{display:flex;align-items:baseline;gap:8px;margin-bottom:9px}
+.blkhead h2{margin:0;font-family:Archivo,sans-serif;font-size:10.5px;font-weight:600;
+  letter-spacing:.15em;text-transform:uppercase;color:var(--t2)}
+.blkhead .n{margin-left:auto;font-family:"IBM Plex Mono",monospace;font-size:9.5px;color:var(--t3)}
+
+/* telemetry tiles — value + unit + MEANING */
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--hair);
+  border:1px solid var(--hair)}
+.tile{background:var(--s);padding:8px 9px;border-left:3px solid transparent}
+.tile .row{display:flex;align-items:baseline;gap:4px;margin-top:1px}
+.tile .v{font-family:"IBM Plex Mono",monospace;font-size:21px;font-weight:500;color:var(--val);
+  line-height:1.12;font-variant-numeric:tabular-nums lining-nums slashed-zero;
+  min-width:4ch;text-align:right}
+.tile .u{font-family:"IBM Plex Mono",monospace;font-size:9.5px;color:var(--t2)}
+.tile .mean{font-size:10px;color:var(--t2);margin-top:3px;line-height:1.3;min-height:26px}
+.tile.caution{border-left-color:var(--caution)} .tile.caution .v{color:var(--caution)}
+.tile.alarm{border-left-color:var(--alarm)} .tile.alarm .v{color:var(--alarm)}
+.tile.stale{border-style:dashed;border-color:var(--struct);border-left-color:var(--struct)}
+.tile.stale .v{color:var(--t3)}
+
+/* control */
+.gov{display:flex;align-items:center;gap:8px;margin-bottom:11px}
+.gov .cap{flex:1;font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--t1)}
+.gov .cap b{font-size:16px;font-weight:600}
+.gov button{border:1px solid var(--struct);width:34px;height:34px;font-size:16px;color:var(--t2)}
+.gov button:hover{border-color:var(--t1);color:var(--t1)}
+
+.pad{display:grid;grid-template-columns:1fr 1.15fr 1fr;grid-template-rows:auto auto auto;
+  grid-template-areas:". u ." "l c r" ". d .";gap:5px}
+.pad button{border:1px solid var(--struct);min-height:52px;font-size:19px;color:var(--t2);
+  touch-action:none;-webkit-user-select:none;user-select:none}
+.pad button:hover{border-color:var(--t1);color:var(--t1)}
+.pad button.on{background:var(--sel-bg);color:var(--sel-fg);border-color:var(--sel-bg)}
+.pad .c{grid-area:c;border:1px solid var(--hair);background:var(--s2);display:flex;
+  flex-direction:column;align-items:center;justify-content:center;gap:1px;padding:4px}
+.pad .c span{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--t2);
+  font-variant-numeric:tabular-nums}
+.pad .c span b{color:var(--val);font-weight:500}
+
+.trim{margin-top:11px}
+.trim input{width:100%;accent-color:var(--t1);height:26px}
+
+/* slide-to-confirm — one gesture for anything that moves the car */
+.slider{margin-top:11px;position:relative;height:46px;border:1px solid var(--struct);
+  background:var(--s2);overflow:hidden;touch-action:none;-webkit-user-select:none;user-select:none}
+.slider .fill{position:absolute;inset:0;width:0;background:var(--sel-bg);opacity:.13}
+.slider .txt{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  gap:7px;font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.12em;
+  color:var(--t2);pointer-events:none}
+.slider .knob{position:absolute;top:3px;left:3px;bottom:3px;width:56px;background:var(--sel-bg);
+  color:var(--sel-fg);display:flex;align-items:center;justify-content:center;font-size:15px;
+  cursor:grab}
+.slider[data-armed="1"] .knob{cursor:grabbing}
+.slider.done .knob{background:var(--t2)}
+.slider.disabled{opacity:.45;pointer-events:none}
+.stopbtn{margin-top:6px;border:1px solid var(--struct);width:100%;min-height:38px;
+  font-family:"IBM Plex Mono",monospace;font-size:11px;letter-spacing:.12em;color:var(--t2)}
+.stopbtn:hover{border-color:var(--alarm);color:var(--alarm)}
+
+.keys{margin-top:11px;padding-top:9px;border-top:1px solid var(--hair);font-size:10.5px;
+  color:var(--t3);line-height:1.6}
+.keys kbd{font-family:"IBM Plex Mono",monospace;font-size:10px;border:1px solid var(--struct);
+  padding:1px 4px;color:var(--t2)}
+.keys.warn{color:var(--caution)}
+
+/* ═══ EVENT LOG — every transition, with its cause ═══ */
+.log{background:var(--s);display:flex;align-items:center;gap:11px;padding:0 13px;
+  min-height:34px;overflow:hidden}
+.log .lab{flex-shrink:0}
+.log ul{display:flex;gap:16px;margin:0;padding:0;list-style:none;overflow-x:auto;flex:1}
+.log li{font-family:"IBM Plex Mono",monospace;font-size:10px;color:var(--t2);white-space:nowrap;
+  display:flex;gap:6px;align-items:baseline}
+.log li time{color:var(--t3)}
+.log li.caution{color:var(--caution)} .log li.alarm{color:var(--alarm)}
+.simtag{flex-shrink:0;font-family:"IBM Plex Mono",monospace;font-size:9px;letter-spacing:.13em;
+  border:1px dashed var(--override);color:var(--override);padding:2px 7px}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="shell">
+
+  <!-- ══ STATUS ══ -->
+  <header class="bar">
+    <div class="brand"><span class="dot"></span>ROBOCAR</div>
+
+    <div class="auto">
+      <div style="display:flex;flex-direction:column;gap:3px">
+        <span class="lab">Autonomy</span>
+        <div class="seg" role="group" aria-label="Autonomy level">
+          <button id="m-manual" class="ov" aria-pressed="true">MANUAL</button>
+          <button id="m-assist" aria-pressed="false">ASSISTED</button>
+          <button id="m-auto" aria-pressed="false">AUTO</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="state" id="state">
+      <span class="gl" id="stateGl">●</span>
+      <div><div class="w" id="stateW">READY</div><div class="sub" id="stateSub">disarmed · stand test</div></div>
+    </div>
+
+    <div class="chips" id="chips"></div>
+
+    <div class="barR">
+      <button class="themebtn" id="themebtn">☾ NIGHT</button>
+      <div class="estopwrap">
+        <button class="estop" id="estop">■ E-STOP</button>
+        <div class="span">STOPS: DRIVE MOTOR + STEERING</div>
+      </div>
+      <button class="clearbtn" id="clearstop" hidden>↺ CLEAR<br>E-STOP</button>
+    </div>
+  </header>
+
+  <!-- ══ PRE-ARM ══ -->
+  <div class="prearm" id="prearm">
+    <span class="tag">PRE-ARM</span>
+    <span id="prearmMsg" class="mono">checking…</span>
+    <span class="more" id="prearmMore"></span>
+  </div>
+
+  <!-- ══ BODY ══ -->
+  <div class="body">
+    <nav class="rail" role="group" aria-label="Task">
+      <button id="t-drive" aria-pressed="true">DRIVE</button>
+      <button id="t-map" aria-pressed="false">MAP</button>
+      <button id="t-navigate" aria-pressed="false">NAVIGATE</button>
+      <button id="t-perception" aria-pressed="false">PERCEPTION</button>
+    </nav>
+
+    <main class="stage">
+      <div class="stagehead"><span class="t" id="sceneTitle">LiDAR · top-down</span></div>
+      <canvas id="scene"></canvas>
+      <img id="sceneImg" alt="" hidden>
+      <button class="camtoggle hidden" id="camShow">▣ SHOW CAMERA</button>
+      <div class="pip hidden" id="pip">
+        <div class="ph"><span id="pipLabel">FRONT</span>
+          <button id="pipSwap">SWAP</button><button id="pipHide">HIDE</button></div>
+        <img id="pipImg" alt="camera feed">
+      </div>
+      <div class="stagefoot">
+        <span class="m" id="mAge"><span class="lab">scan</span><b>—</b></span>
+        <span class="m" id="mLat"><span class="lab">loop</span><b>—</b></span>
+        <span class="m" id="mNear"><span class="lab">nearest</span><b>—</b></span>
+        <span class="m" id="mScale"><span class="lab">rings</span><b>1 m</b></span>
+        <span class="hint" id="sceneHint">drag the pad or hold W · A · S · D</span>
+      </div>
+    </main>
+
+    <aside class="side">
+      <section class="blk">
+        <div class="blkhead"><h2>Telemetry</h2><span class="n" id="telRate">—</span></div>
+        <div class="tiles" id="tiles"></div>
+      </section>
+
+      <section class="blk" id="ctlBlk">
+        <div class="blkhead"><h2 id="ctlTitle">Manual drive</h2><span class="n" id="ctlArm">DISARMED</span></div>
+
+        <div class="act" id="act"></div>
+
+        <div class="gov">
+          <span class="cap">speed cap <b id="capV">6</b>%</span>
+          <button id="capD" aria-label="Lower speed cap">−</button>
+          <button id="capU" aria-label="Raise speed cap">+</button>
+        </div>
+
+        <div class="pad">
+          <button id="pF" style="grid-area:u" aria-label="Forward">▲</button>
+          <button id="pL" style="grid-area:l" aria-label="Steer left">◄</button>
+          <div class="c"><span>THR <b id="thrV">0</b>%</span><span>STR <b id="strV">+0.00</b></span></div>
+          <button id="pR" style="grid-area:r" aria-label="Steer right">►</button>
+          <button id="pB" style="grid-area:d" aria-label="Reverse">▼</button>
+        </div>
+
+        <div class="trim">
+          <span class="lab">Steering trim</span>
+          <input type="range" id="trim" min="-1" max="1" step="0.02" value="0" aria-label="Steering trim">
+        </div>
+
+        <div class="slider disabled" id="go" data-armed="0">
+          <div class="fill" id="goFill"></div>
+          <div class="txt" id="goTxt">SLIDE TO DRIVE ROUTE ››</div>
+          <div class="knob" id="goKnob">›</div>
+        </div>
+        <button class="stopbtn" id="stopbtn" hidden>■ STOP FOLLOWING</button>
+
+        <div id="detsWrap" hidden>
+          <span class="lab">Detections · front</span>
+          <div class="dets" id="dets"><div class="empty">enter PERCEPTION to run detection</div></div>
+        </div>
+
+        <div class="keys" id="keys">
+          hold <kbd>W</kbd><kbd>S</kbd> drive · <kbd>A</kbd><kbd>D</kbd> steer, springs back ·
+          <kbd>SPACE</kbd> E-STOP
+        </div>
+      </section>
+    </aside>
+  </div>
+
+  <!-- ══ EVENTS ══ -->
+  <footer class="log">
+    <span class="lab">Events</span>
+    <ul id="events"></ul>
+    <span class="simtag" id="simtag" hidden>SIMULATED — NO CAR</span>
+  </footer>
 </div>
 
 <script>
-let L=6, held=0, ka=null, mode='drive', rearOn=false;
-async function cmd(q){try{await fetch('/cmd?'+q,{method:'POST'})}catch(e){}}
-const $=id=>document.getElementById(id);
+"use strict";
+const $ = id => document.getElementById(id);
+const clamp = (v,a,b) => v<a?a:v>b?b:v;
+const fmt = (v,d=2) => v==null||Number.isNaN(v) ? "—" : v.toFixed(d);
 
-// ---- mode tabs ----
-function setMode(m){mode=m;cmd('mode='+m);
-  document.querySelectorAll('#tabs .tab').forEach(t=>t.classList.toggle('on',t.dataset.m===m));
-  $('ctx_drive').className=(m==='drive')?'hint':'hide';
-  $('ctx_map').className=(m==='map')?'':'hide';
-  $('ctx_nav').className=(m==='navigate')?'':'hide';
-  $('ctx_perc').className=(m==='perception')?'hint':'hide';
-  $('maptitle').textContent=(m==='map')?'SLAM MAP (building)':(m==='navigate')?'NAVIGATION MAP':'LIDAR RADAR';
+/* ── theme: explicit control, not just prefers-color-scheme (§ dark themes) ── */
+let hmi = "day";
+try{ hmi = localStorage.getItem("hmi") || (matchMedia("(prefers-color-scheme: dark)").matches?"night":"day"); }catch(e){}
+function applyTheme(){
+  document.documentElement.dataset.hmi = hmi;
+  $("themebtn").textContent = hmi==="night" ? "☀ DAY" : "☾ NIGHT";
+  try{ localStorage.setItem("hmi", hmi); }catch(e){}
 }
-document.querySelectorAll('#tabs .tab').forEach(t=>t.addEventListener('click',()=>setMode(t.dataset.m)));
+$("themebtn").onclick = () => { hmi = hmi==="night"?"day":"night"; applyTheme(); };
+applyTheme();
 
-// ---- estop ----
-let estopped=false;
-$('estop').addEventListener('click',()=>{cmd('estop=1');setHeld(0);setSteerTarget(0);});
-// Clearing is its own control, shown only while latched, and it leaves the car
-// DISARMED — you still have to choose to drive afterwards.
-$('clearstop').addEventListener('click',()=>{cmd('clearstop=1');});
+/* ── local UI state ── */
+const UI = {
+  mode:"drive", autonomy:"MANUAL", cap:6,
+  held:0, steerTarget:0, steerCur:0,
+  estop:false, armed:false, following:false, live:false
+};
+const EV = [];
+function logEvent(text, kind){
+  const d = new Date();
+  EV.unshift({t:d.toTimeString().slice(0,8), text, kind:kind||""});
+  if(EV.length>8) EV.pop();
+  $("events").innerHTML = EV.map(e =>
+    `<li class="${e.kind}"><time>${e.t}</time><span>${e.text}</span></li>`).join("");
+}
 
-// ---- expand panels ----
-document.querySelectorAll('.exp').forEach(b=>b.addEventListener('click',()=>{
-  $(b.dataset.t).closest('.panel').classList.toggle('full');}));
+/* ── transport: live endpoints, else simulate. Never fake being connected. ── */
+async function cmd(q){
+  if(!UI.live) return mockCmd(q);
+  try{ await fetch("/cmd?"+q,{method:"POST"}); }catch(e){}
+}
+async function getState(){
+  try{
+    const r = await fetch("/state",{cache:"no-store"});
+    if(!r.ok) throw 0;
+    const j = await r.json();
+    if(!UI.live){ UI.live = true; $("simtag").hidden = true; logEvent("link established"); }
+    return j;
+  }catch(e){
+    if(UI.live){ UI.live = false; logEvent("link lost — telemetry simulated","alarm"); }
+    $("simtag").hidden = false;
+    return mockState();
+  }
+}
 
-// ---- map click (navigate only) ----
-$('mapimg').addEventListener('click',e=>{
-  if(mode!=='navigate')return;
-  const r=e.target.getBoundingClientRect();
-  const x=(e.clientX-r.left)/r.width*500, y=(e.clientY-r.top)/r.height*500;
-  $('navinfo').textContent='goal set ('+Math.round(x)+','+Math.round(y)+') — planning…';
-  cmd('goalx='+Math.round(x)+'&goaly='+Math.round(y));});
+/* ── simulator: a plausible car on a stand, so the page opens in a working state ── */
+const SIM = { t0:performance.now(), tach:0, estop:false, armed:false, follow:false };
+function mockCmd(q){
+  if(q.includes("estop=1")){ SIM.estop=true; SIM.armed=false; SIM.follow=false; }
+  if(q.includes("clearstop=1")){ SIM.estop=false; SIM.armed=false; }
+  if(q.includes("arm=off")) SIM.armed = false;
+  else if(q.includes("arm=") && !SIM.estop) SIM.armed = true;
+  if(q.includes("follow=1") && !SIM.estop){ SIM.follow=true; SIM.armed=true; }
+  if(q.includes("follow=0")) SIM.follow=false;
+}
+function mockState(){
+  const t = (performance.now()-SIM.t0)/1000;
+  const moving = SIM.armed && (UI.held!==0 || SIM.follow);
+  const speed = moving ? 0.34 + 0.05*Math.sin(t*1.7) : 0;
+  SIM.tach += speed*0.05;
+  return {
+    mode: UI.mode,
+    health:{ lidar:true, vesc:true, steer:true, cam:true,
+             detector: UI.mode==="perception", loc: UI.mode!=="navigate" ? null : (t%23>17?false:true) },
+    drive:{ armed:SIM.armed, estop:SIM.estop, duty: moving ? UI.cap*(UI.held||1) : 0 },
+    tele:{ speed, v_in: 11.9 - 0.0009*t, temp_mos: 31.4 + 0.6*Math.sin(t/9),
+           fault:"NONE", tach:SIM.tach },
+    near: 0.55 + 0.42*Math.abs(Math.sin(t/5.5)),
+    scan_age: 0.05 + 0.03*Math.abs(Math.sin(t*2)),
+    loop_ms: 78 + 14*Math.sin(t*0.8),
+    follow:{ on:SIM.follow, note: SIM.follow?"driving 1.84 m to goal":"" },
+    heading: (t*7)%360,
+    frames: Math.floor(t*3),
+    front_dets: UI.mode==="perception"
+      ? [{name:"person",conf:.71,vru:true},{name:"chair",conf:.58,vru:false},
+         {name:"laptop",conf:.54,vru:false}] : [],
+    _sim:true
+  };
+}
 
-// ---- navigate GO/STOP, map save ----
-$('gobtn').addEventListener('click',()=>cmd('follow=1'));
-$('stopbtn').addEventListener('click',()=>cmd('follow=0'));
-$('savemap').addEventListener('click',()=>{cmd('save=1');$('mapinfo').textContent='map saved → maps/room';});
+/* ── pre-arm: continuous while disarmed, first specific failure, prefixed ── */
+function preArm(s){
+  const out = [];
+  if(s.drive && s.drive.estop) out.push("E-STOP latched — press CLEAR E-STOP to release");
+  if(!s.health || !s.health.lidar) out.push("no LiDAR scans — is another process holding the port?");
+  if(UI.mode==="navigate" && s.health && s.health.loc===false)
+    out.push("localization not matched — park the car where mapping started");
+  if(s.tele && s.tele.fault && s.tele.fault!=="NONE") out.push("VESC fault: "+s.tele.fault);
+  if(s.tele && s.tele.v_in!=null && s.tele.v_in < 10.8) out.push("battery below arming minimum");
+  return out;
+}
+let lastPreArm = "", lastPreArmAt = 0;
+function renderPreArm(s){
+  const f = preArm(s), el = $("prearm");
+  if(!f.length){
+    el.className = "prearm clear";
+    $("prearmMsg").textContent = "all checks pass — ready to arm";
+    $("prearmMore").textContent = "";
+    lastPreArm = "";
+    return;
+  }
+  el.className = "prearm";
+  $("prearmMsg").textContent = "PreArm: " + f[0];
+  $("prearmMore").textContent = f.length>1 ? "+"+(f.length-1)+" more" : "";
+  const now = performance.now();
+  if(f[0] !== lastPreArm || now - lastPreArmAt > 30000){   // re-announce every 30 s
+    if(f[0] !== lastPreArm) logEvent("PreArm: "+f[0], "caution");
+    lastPreArm = f[0]; lastPreArmAt = now;
+  }
+}
 
-// ---- environment ----
-document.querySelectorAll('#envseg button').forEach(b=>b.addEventListener('click',()=>{
-  document.querySelectorAll('#envseg button').forEach(x=>x.classList.remove('on'));
-  b.classList.add('on');cmd('env='+b.dataset.e);}));
+/* ── chips: glyph + text + border. Stale is dashed, not just dim. ── */
+function chip(name, st, note){
+  const g = st==="ok"?"●":st==="caution"?"▲":st==="alarm"?"■":"◌";
+  const cls = st==="ok"?"":st;
+  return `<span class="chip ${cls}"><span class="gl">${g}</span>${name}${note?" "+note:""}</span>`;
+}
+function renderChips(s){
+  const h = s.health||{}, out = [];
+  out.push(chip("LIDAR", h.lidar?"ok":"alarm", h.lidar?"":"NO DATA"));
+  out.push(chip("VESC", h.vesc?"ok":"stale", h.vesc?"":"NO REPLY"));
+  out.push(chip("STEER", h.steer?"ok":"stale"));
+  out.push(chip("CAM", h.cam?"ok":"stale"));
+  if(UI.mode==="navigate") out.push(chip("LOC", h.loc?"ok":"caution", h.loc?"":"NOT MATCHED"));
+  if(UI.mode==="perception") out.push(chip("DETECT", h.detector?"ok":"stale"));
+  $("chips").innerHTML = out.join("");
+}
 
-// ---- rear cam ----
-$('rearbtn').addEventListener('click',()=>{rearOn=!rearOn;cmd('rear='+(rearOn?1:0));
-  $('rearbtn').textContent=rearOn?'DISABLE':'ENABLE';
-  $('rearcam').src=rearOn?('/cam/rear.mjpg?'+Date.now()):'';});
+/* ── one top-level state word ── */
+function renderState(s){
+  const d = s.drive||{}, el = $("state");
+  let w="READY", sub="disarmed · safe to approach", cls="", gl="●";
+  if(d.estop){ w="E-STOP"; sub="latched — clear to release"; cls="alarm"; gl="■"; }
+  else if(preArm(s).length){ w="NOT READY"; sub="see pre-arm below"; cls="caution"; gl="▲"; }
+  else if(s.follow && s.follow.on){ w="DRIVING"; sub=s.follow.note||"following route"; cls=""; gl="▶"; }
+  else if(d.armed){ w="ARMED"; sub="throttle live"; cls="caution"; gl="▲"; }
+  el.className = "state "+cls;
+  $("stateW").textContent = w; $("stateSub").textContent = sub; $("stateGl").textContent = gl;
+  $("ctlArm").textContent = d.estop ? "E-STOP" : d.armed ? "ARMED" : "DISARMED";
+}
 
-// ---- manual drive (drive-pad + keyboard, auto-arm, spring-back steer) ----
-let armed=false;
-$('armbtn').addEventListener('click',()=>cmd('arm=toggle'));
-$('lvlm').addEventListener('click',()=>{L=Math.max(1,L-1);$('lvl').textContent=L});
-$('lvlp').addEventListener('click',()=>{L=Math.min(20,L+1);$('lvl').textContent=L});
+/* ── telemetry tiles: every number carries an interpretation ── */
+function tile(label, val, unit, mean, st){
+  return `<div class="tile ${st||""}"><span class="lab">${label}</span>
+    <div class="row"><span class="v">${val}</span><span class="u">${unit}</span></div>
+    <div class="mean">${mean}</div></div>`;
+}
+function renderTiles(s){
+  const t = s.tele||{}, near = s.near, sp = t.speed||0;
+  const stopT = (sp>0.02 && near!=null) ? near/sp : null;
+  const nearSt = near==null?"stale":near<0.5?"alarm":near<0.9?"caution":"";
+  const battSt = t.v_in==null?"stale":t.v_in<10.8?"alarm":t.v_in<11.1?"caution":"";
+  $("tiles").innerHTML =
+    tile("Speed", fmt(sp,2), "m/s",
+         sp<0.02 ? "stationary" : `${fmt(sp*3.6,1)} km/h over ground`) +
+    tile("Clearance", fmt(near,2), "m",
+         near==null ? "no LiDAR return" :
+         stopT ? `${fmt(stopT,1)} s to contact at speed` : "path ahead clear", nearSt) +
+    tile("Battery", fmt(t.v_in,1), "V",
+         t.v_in==null ? "no VESC reply" :
+         t.v_in<10.8 ? "below arming minimum" :
+         `${fmt((t.v_in-9.9)/(12.6-9.9)*100,0)}% of 3S usable range`, battSt) +
+    tile("MOS temp", fmt(t.temp_mos,1), "°C",
+         t.temp_mos==null ? "no VESC reply" :
+         t.temp_mos>70 ? "throttling risk" : "well inside limits");
+}
 
-// throttle: keep streaming while held (deadman), send one 0 on release
-let thrLoop=null;
+/* ── scene: canvas radar. Free transparent, unknown hatched, categorical off-ramp. ── */
+const cv = $("scene"), cx = cv.getContext("2d");
+let SCAN = [];
+function css(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+function resize(){
+  const r = cv.getBoundingClientRect(), dpr = Math.min(devicePixelRatio||1, 2);
+  cv.width = Math.max(1, r.width*dpr); cv.height = Math.max(1, r.height*dpr);
+  cx.setTransform(dpr,0,0,dpr,0,0);
+}
+new ResizeObserver(resize).observe(cv);
+
+function drawScene(s){
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if(!w||!h) return;
+  cx.clearRect(0,0,w,h);
+  const cxp = w/2, cyp = h/2, R = Math.min(w,h)/2 - 18, PPM = R/4.2;   // 4.2 m radius
+
+  cx.strokeStyle = css("--struct"); cx.globalAlpha = .5; cx.lineWidth = 1;
+  for(let m=1;m<=4;m++){ cx.beginPath(); cx.arc(cxp,cyp,m*PPM,0,7); cx.stroke(); }
+  cx.beginPath(); cx.moveTo(cxp,cyp-R); cx.lineTo(cxp,cyp+R);
+  cx.moveTo(cxp-R,cyp); cx.lineTo(cxp+R,cyp); cx.stroke();
+  cx.globalAlpha = 1;
+
+  // returns — neutral unless close enough to matter (display by exception)
+  const stale = (s.scan_age||0) > 0.6;
+  for(const p of SCAN){
+    const px = cxp + p.y*PPM, py = cyp - p.x*PPM;
+    const d = Math.hypot(p.x,p.y);
+    cx.fillStyle = stale ? css("--struct") : d<0.5 ? css("--alarm") : d<0.9 ? css("--caution") : css("--val");
+    cx.globalAlpha = stale ? .35 : 1;
+    cx.fillRect(px-1.5, py-1.5, 3, 3);
+  }
+  cx.globalAlpha = 1;
+
+  // footprint as a true polygon — clearance is the judgement being made
+  const L = 0.28*PPM, W = 0.15*PPM;
+  cx.strokeStyle = css("--t1"); cx.lineWidth = 1.5;
+  cx.strokeRect(cxp-W, cyp-L, W*2, L*2);
+  cx.beginPath(); cx.moveTo(cxp-W*0.6, cyp-L); cx.lineTo(cxp, cyp-L-7); cx.lineTo(cxp+W*0.6, cyp-L);
+  cx.closePath(); cx.fillStyle = css("--t1"); cx.fill();
+
+  if(stale){
+    cx.fillStyle = css("--caution");
+    cx.font = "600 11px 'IBM Plex Mono', monospace";
+    cx.fillText("SCAN STALE", 14, h-14);
+  }
+}
+function mockScan(t){
+  const pts = [];
+  for(let a=0;a<360;a+=2){
+    if(a>168 && a<192) continue;                       // masked rear bumper
+    const rad = a*Math.PI/180;
+    let r = 2.6 + 1.1*Math.sin(rad*2 + t*0.15) + 0.5*Math.cos(rad*3);
+    if(a>340 || a<20) r = Math.min(r, 0.75 + 0.35*Math.abs(Math.sin(t/5.5)));
+    pts.push({ x:r*Math.cos(rad), y:r*Math.sin(rad) });
+  }
+  return pts;
+}
+
+/* ── commands ── */
+function setAutonomy(a, cause){
+  if(UI.autonomy===a) return;
+  UI.autonomy = a;
+  for(const [k,id] of [["MANUAL","m-manual"],["ASSISTED","m-assist"],["AUTO","m-auto"]])
+    $(id).setAttribute("aria-pressed", String(k===a));
+  logEvent(`autonomy → ${a}${cause?" — "+cause:""}`, a==="AUTO"?"caution":"");
+}
+["manual","assist","auto"].forEach((k,i) => {
+  $("m-"+k).onclick = () => setAutonomy(["MANUAL","ASSISTED","AUTO"][i], "operator");
+});
+
+function setMode(m){
+  UI.mode = m;
+  for(const k of ["drive","map","navigate","perception"])
+    $("t-"+k).setAttribute("aria-pressed", String(k===m));
+  $("sceneTitle").textContent = { drive:"LiDAR · top-down", map:"SLAM · building map",
+    navigate:"Navigation · saved map", perception:"Perception · front camera" }[m];
+  $("ctlTitle").textContent = m==="navigate" ? "Route control" : "Manual drive";
+  $("go").classList.remove("disabled");
+  resetGo();
+  $("sceneHint").textContent = m==="navigate" ? "click the map to set a goal"
+    : m==="map" ? "drive slowly so scans overlap — then SAVE MAP"
+    : "drag the pad or hold W · A · S · D";
+  cmd("mode="+m);
+  renderAct(); syncScene();
+  logEvent("task → "+m.toUpperCase());
+}
+["drive","map","navigate","perception"].forEach(k => $("t-"+k).onclick = () => setMode(k));
+
+/* the scene shows the map in MAP/NAVIGATE, the camera in PERCEPTION, radar otherwise */
+function syncScene(){
+  const m = UI.mode;
+  const useImg = (m==="map" || m==="navigate" || m==="perception");
+  $("scene").hidden = useImg;
+  $("sceneImg").hidden = !useImg;
+  if(m==="perception"){ $("sceneImg").src = UI.live ? "/cam/front.mjpg" : ""; }
+  else if(useImg && !UI.live){ $("sceneImg").src = ""; }
+  // camera PiP is useful while driving and mapping; in PERCEPTION the camera IS the scene
+  const wantPip = (m==="drive" || m==="map" || m==="navigate");
+  $("camShow").classList.toggle("hidden", !wantPip || UI.pipOn);
+  $("pip").classList.toggle("hidden", !wantPip || !UI.pipOn);
+  if(wantPip && UI.pipOn) setPipSrc();
+}
+UI.pipOn = false; UI.pipRear = false;
+function setPipSrc(){
+  $("pipLabel").textContent = UI.pipRear ? "REAR" : "FRONT";
+  $("pipImg").src = UI.live ? (UI.pipRear ? "/cam/rear.mjpg?" : "/cam/front.mjpg?")+Date.now() : "";
+}
+$("camShow").onclick = () => { UI.pipOn = true; if(UI.pipRear) cmd("rear=1"); syncScene(); };
+$("pipHide").onclick = () => { UI.pipOn = false; cmd("rear=0"); syncScene(); };
+$("pipSwap").onclick = () => {
+  UI.pipRear = !UI.pipRear; cmd("rear="+(UI.pipRear?1:0)); setPipSrc();
+  logEvent("camera → "+(UI.pipRear?"rear":"front"));
+};
+
+/* contextual actions — what this task actually needs, nothing else */
+function renderAct(){
+  const a = $("act");
+  if(UI.mode==="map"){
+    a.innerHTML = `<button id="saveMap">\u{1F4BE} SAVE MAP</button>
+      <span class="note" id="mapNote">drive slowly — overlapping scans make a clean map</span>`;
+    $("saveMap").onclick = async () => {
+      await cmd("save=1");
+      $("mapNote").className = "note ok";
+      $("mapNote").textContent = "save requested — confirm [map] saved in the console";
+      logEvent("map save requested");
+    };
+  } else if(UI.mode==="navigate"){
+    a.innerHTML = `<div class="seg2" role="group" aria-label="Environment">
+        <button id="envIn" aria-pressed="true">INDOOR 7%</button>
+        <button id="envOut" aria-pressed="false">OUTDOOR 9%</button></div>
+      <span class="note" id="goalNote">click the map to set a goal</span>`;
+    $("envIn").onclick = () => setEnv("indoor"); $("envOut").onclick = () => setEnv("outdoor");
+  } else if(UI.mode==="perception"){
+    a.innerHTML = `<span class="note">detector is resident only in this task — it is freed on exit</span>`;
+  } else {
+    a.innerHTML = `<span class="note">manual driving · LiDAR radar above</span>`;
+  }
+  $("detsWrap").hidden = UI.mode!=="perception";
+}
+function setEnv(e){
+  cmd("env="+e);
+  $("envIn").setAttribute("aria-pressed", String(e==="indoor"));
+  $("envOut").setAttribute("aria-pressed", String(e==="outdoor"));
+  logEvent("auto-drive duty → "+(e==="indoor"?"7%":"9%"));
+}
+
+/* spatial commands go into the scene, not a coordinate form */
+$("sceneImg").addEventListener("click", e => {
+  if(UI.mode!=="navigate") return;
+  const r = e.target.getBoundingClientRect();
+  const x = Math.round((e.clientX-r.left)/r.width*500), y = Math.round((e.clientY-r.top)/r.height*500);
+  cmd("goalx="+x+"&goaly="+y);
+  const n = $("goalNote"); if(n){ n.className="note ok"; n.textContent = "goal set — planning…"; }
+  logEvent(`goal set at map (${x}, ${y})`);
+});
+
+$("estop").onclick = () => {
+  setHeld(0); setSteer(0);
+  cmd("estop=1");
+  setAutonomy("MANUAL","E-STOP");
+  logEvent("E-STOP latched","alarm");
+};
+$("clearstop").onclick = () => { cmd("clearstop=1"); logEvent("E-STOP cleared — still disarmed"); };
+
+/* speed governor */
+function setCap(v){ UI.cap = clamp(v,1,20); $("capV").textContent = UI.cap; }
+$("capU").onclick = () => setCap(UI.cap+1);
+$("capD").onclick = () => setCap(UI.cap-1);
+
+/* throttle — streamed while held so the 0.5 s deadman stays fed */
+let thrTimer = null;
 function setHeld(d){
-  if(d!==0 && estopped){                            // latched: refuse, and say why
-    $('khint').innerHTML='⛔ <b>E-STOP is latched</b> — press CLEAR E-STOP to release it.';
-    return;}
-  if(d!==0 && !armed){cmd('arm=on');armed=true;}   // auto-enable on first drive input
-  held=d;
-  $('fwd').classList.toggle('act',d>0); $('rev').classList.toggle('act',d<0);
-  if(!thrLoop) thrLoop=setInterval(()=>{
-    if(held!==0){cmd('throttle='+(held*L/100));}
-    else{cmd('throttle=0');clearInterval(thrLoop);thrLoop=null;}
-    $('thrLED').textContent='THR '+Math.round(held*L)+'%';
-  },110);
+  if(d!==0 && UI.estop){
+    $("keys").classList.add("warn");
+    $("keys").innerHTML = "⛔ <b>E-STOP is latched</b> — press CLEAR E-STOP to release it.";
+    return;
+  }
+  UI.held = d;
+  $("pF").classList.toggle("on", d>0); $("pB").classList.toggle("on", d<0);
+  if(!thrTimer) thrTimer = setInterval(() => {
+    if(UI.held!==0){ cmd("throttle="+(UI.held*UI.cap/100).toFixed(3)); }
+    else { cmd("throttle=0"); clearInterval(thrTimer); thrTimer = null; }
+    $("thrV").textContent = Math.round(UI.held*UI.cap);
+  }, 110);
 }
-// steering: momentary target that springs back to 0
-let steerCur=0,steerTarget=0,steerLoop=null;
-function applySteer(v){steerCur=v;$('steer').value=v.toFixed(2);
-  $('steLED').textContent='STEER '+v.toFixed(1);cmd('steer='+v.toFixed(2));}
-function startSteerLoop(){ if(steerLoop)return; steerLoop=setInterval(()=>{
-  const dz=steerTarget-steerCur; steerCur+=Math.max(-0.22,Math.min(0.22,dz));
-  if(Math.abs(steerCur-steerTarget)<0.03){steerCur=steerTarget;}
-  applySteer(steerCur);
-  if(steerTarget===0 && steerCur===0){clearInterval(steerLoop);steerLoop=null;}
-},60);}
-function setSteerTarget(t){steerTarget=t;
-  $('left').classList.toggle('act',t<0); $('right').classList.toggle('act',t>0);
-  startSteerLoop();}
+/* steering springs back to the trim value, not to zero */
+let steerTimer = null, trimVal = 0;
+function applySteer(v){
+  UI.steerCur = v; $("strV").textContent = (v<0?"":"+")+v.toFixed(2);
+  cmd("steer="+v.toFixed(2));
+}
+function setSteer(t){
+  UI.steerTarget = t;
+  $("pL").classList.toggle("on", t < trimVal - 0.01);
+  $("pR").classList.toggle("on", t > trimVal + 0.01);
+  if(steerTimer) return;
+  steerTimer = setInterval(() => {
+    const d = UI.steerTarget - UI.steerCur;
+    UI.steerCur += clamp(d, -0.22, 0.22);
+    if(Math.abs(UI.steerCur-UI.steerTarget) < 0.03) UI.steerCur = UI.steerTarget;
+    applySteer(UI.steerCur);
+    if(UI.steerTarget===UI.steerCur){ clearInterval(steerTimer); steerTimer = null; }
+  }, 60);
+}
+$("trim").oninput = e => { trimVal = parseFloat(e.target.value); UI.steerCur = trimVal; applySteer(trimVal); };
 
-// on-screen pad (mouse + touch, press-and-hold)
-function bindHold(id,onDown,onUp){const b=$(id);
-  b.addEventListener('mousedown',e=>{e.preventDefault();onDown();});
-  b.addEventListener('mouseup',onUp);b.addEventListener('mouseleave',onUp);
-  b.addEventListener('touchstart',e=>{e.preventDefault();onDown();});
-  b.addEventListener('touchend',e=>{e.preventDefault();onUp();});}
-bindHold('fwd',()=>setHeld(1),()=>setHeld(0));
-bindHold('rev',()=>setHeld(-1),()=>setHeld(0));
-bindHold('left',()=>setSteerTarget(-1),()=>setSteerTarget(0));
-bindHold('right',()=>setSteerTarget(1),()=>setSteerTarget(0));
-// steering trim slider stays where you leave it
-$('steer').addEventListener('input',e=>{steerTarget=parseFloat(e.target.value);
-  steerCur=steerTarget;applySteer(steerCur);});
+function hold(el, down, up){
+  el.addEventListener("pointerdown", e => { e.preventDefault(); el.setPointerCapture(e.pointerId); down(); });
+  el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up);
+  el.addEventListener("pointerleave", up);
+}
+hold($("pF"), () => setHeld(1),  () => setHeld(0));
+hold($("pB"), () => setHeld(-1), () => setHeld(0));
+hold($("pL"), () => setSteer(-1), () => setSteer(trimVal));
+hold($("pR"), () => setSteer(1),  () => setSteer(trimVal));
 
-// keyboard driving (works anywhere except when typing in a field)
-const K={};
-addEventListener('keydown',e=>{
-  if(e.target.tagName==='INPUT')return;
-  const k=e.key.toLowerCase();
-  if([' ','arrowup','arrowdown','arrowleft','arrowright'].includes(k))e.preventDefault();
-  if(k===' '){cmd('estop=1');setHeld(0);setSteerTarget(0);return;}
-  if(K[k])return; K[k]=true; recompute();});
-addEventListener('keyup',e=>{const k=e.key.toLowerCase();if(K[k]){delete K[k];recompute();}});
+/* slide-to-confirm — the one gesture for anything that moves the car */
+function goLabel(){
+  if(UI.mode==="navigate") return UI.following ? "FOLLOWING ROUTE" : "SLIDE TO DRIVE ROUTE \u203A\u203A";
+  return UI.armed ? "DRIVING ENABLED" : "SLIDE TO ENABLE DRIVING \u203A\u203A";
+}
+function resetGo(){
+  const sl = $("go");
+  const done = UI.mode==="navigate" ? UI.following : UI.armed;
+  sl.classList.toggle("done", done);
+  $("goTxt").textContent = goLabel();
+  $("stopbtn").hidden = !done;
+  $("stopbtn").textContent = UI.mode==="navigate" ? "\u25A0 STOP FOLLOWING" : "\u25A0 DISARM";
+  if(!done){ $("goKnob").style.transform = "translateX(0)"; $("goFill").style.width = "0"; }
+}
+
+(function(){
+  const sl = $("go"), knob = $("goKnob"), fill = $("goFill");
+  let dragging = false, startX = 0, x = 0, max = 0;
+  function reset(){ x = 0; knob.style.transform = "translateX(0)"; fill.style.width = "0"; }
+  sl.addEventListener("pointerdown", e => {
+    if(sl.classList.contains("disabled")) return;
+    if(UI.estop){ logEvent("refused — E-STOP is latched","caution"); return; }
+    dragging = true; sl.dataset.armed = "1"; startX = e.clientX;
+    max = sl.clientWidth - knob.offsetWidth - 6;
+    sl.setPointerCapture(e.pointerId);
+  });
+  sl.addEventListener("pointermove", e => {
+    if(!dragging) return;
+    x = clamp(e.clientX - startX, 0, max);
+    knob.style.transform = `translateX(${x}px)`;
+    fill.style.width = (x + knob.offsetWidth) + "px";
+  });
+  function end(){
+    if(!dragging) return;
+    dragging = false; sl.dataset.armed = "0";
+    if(x >= max - 4){
+      if(UI.mode==="navigate"){
+        cmd("follow=1"); UI.following = true;
+        setAutonomy("AUTO","route accepted");
+        logEvent("route accepted — auto-driving","caution");
+      } else {
+        cmd("arm=on"); UI.armed = true;
+        setAutonomy("MANUAL","driving enabled");
+        logEvent("throttle armed — manual driving","caution");
+      }
+      resetGo();
+    } else reset();
+  }
+  sl.addEventListener("pointerup", end); sl.addEventListener("pointercancel", end);
+  sl.addEventListener("keydown", e => {
+    if(e.key===" " || e.key==="Enter"){ e.preventDefault(); x = max; end(); }
+  });
+  sl.tabIndex = 0;
+  $("stopbtn").onclick = () => {
+    if(UI.mode==="navigate"){
+      cmd("follow=0"); UI.following = false;
+      setAutonomy("MANUAL","operator stopped route");
+      logEvent("route stopped");
+    } else {
+      cmd("arm=off"); UI.armed = false;
+      logEvent("throttle disarmed");
+    }
+    reset(); resetGo();
+  };
+})();
+
+/* keyboard */
+const K = {};
+addEventListener("keydown", e => {
+  if(e.target.tagName==="INPUT") return;
+  const k = e.key.toLowerCase();
+  if([" ","arrowup","arrowdown","arrowleft","arrowright"].includes(k)) e.preventDefault();
+  if(k===" "){ $("estop").click(); return; }
+  if(K[k]) return; K[k] = true; recompute();
+});
+addEventListener("keyup", e => { const k = e.key.toLowerCase(); if(K[k]){ delete K[k]; recompute(); } });
 function recompute(){
-  const f=(K['w']||K['arrowup'])?1:((K['s']||K['arrowdown'])?-1:0);
-  const s=(K['a']||K['arrowleft'])?-1:((K['d']||K['arrowright'])?1:0);
-  setHeld(f); setSteerTarget(s);}
+  setHeld((K.w||K.arrowup) ? 1 : (K.s||K.arrowdown) ? -1 : 0);
+  setSteer((K.a||K.arrowleft) ? -1 : (K.d||K.arrowright) ? 1 : trimVal);
+}
 
-// ---- map refresh (single-jpg endpoint) ----
-setInterval(()=>{$('mapimg').src='/map.jpg?'+Date.now();},220);
+/* ── render loop: display rate decoupled from sample rate (2–5 Hz) ── */
+let lastPaint = 0, lastState = null, fps = 0, frames = 0, fpsT = 0;
+async function tick(){
+  const s = await getState();
+  lastState = s;
+  UI.estop = !!(s.drive && s.drive.estop);
+  UI.armed = !!(s.drive && s.drive.armed);
+  $("estop").classList.toggle("latched", UI.estop);
+  $("clearstop").hidden = !UI.estop;
+  if(!UI.estop && $("keys").classList.contains("warn")){
+    $("keys").classList.remove("warn");
+    $("keys").innerHTML = "hold <kbd>W</kbd><kbd>S</kbd> drive · <kbd>A</kbd><kbd>D</kbd> steer, springs back · <kbd>SPACE</kbd> E-STOP";
+  }
+  UI.following = !!(s.follow && s.follow.on);
+  resetGo();
+  renderState(s); renderChips(s); renderPreArm(s); renderTiles(s);
 
-// ---- 3D lidar view ----
-const cv=$('view3d'), cx2=cv.getContext('2d');
-function draw3d(pts){const W=cv.width,H=cv.height,cx=W/2,horizon=H*0.30,S=30;
-  cx2.fillStyle='#05080b';cx2.fillRect(0,0,W,H);
-  // ground grid (forward lines + lateral arcs)
-  cx2.strokeStyle='rgba(40,70,80,.45)';cx2.lineWidth=1;
-  for(let fx=1;fx<=5;fx++){const y=horizon+(6-fx)*((H-horizon)/6);
-    cx2.beginPath();cx2.moveTo(20,y);cx2.lineTo(W-20,y);cx2.stroke();}
-  for(let fy=-3;fy<=3;fy++){cx2.beginPath();
-    cx2.moveTo(cx+fy*20,horizon);cx2.lineTo(cx+fy*S*2.2,H);cx2.stroke();}
-  // points as vertical bars (near=warm, far=teal)
-  for(const [fx,fy] of pts){if(fx<=0.05)continue;
-    const depth=Math.min(fx,6), t=depth/6;
-    const sx=cx+ (fy/ (0.5+depth*0.32))*S;
-    const sy=horizon+(1-t)*(H-horizon);
-    const barH=Math.max(3,26*(1-t));
-    const g=Math.floor(210*t+60), r=Math.floor(230*(1-t)+50), b=Math.floor(190*t+70);
-    cx2.strokeStyle='rgb('+r+','+g+','+b+')';cx2.lineWidth=2;
-    cx2.beginPath();cx2.moveTo(sx,sy);cx2.lineTo(sx,sy-barH);cx2.stroke();}
-  // car
-  cx2.fillStyle='#5fd3bc';cx2.beginPath();cx2.moveTo(cx,H-6);
-  cx2.lineTo(cx-7,H);cx2.lineTo(cx+7,H);cx2.closePath();cx2.fill();
-  cx2.fillStyle='rgba(95,211,188,.6)';cx2.font='10px monospace';
-  cx2.fillText('FWD',cx-11,horizon-6);}
-async function poll3d(){try{const s=await(await fetch('/scan')).json();draw3d(s.pts||[]);}catch(e){}
-  setTimeout(poll3d,200);}
+  const age = s.scan_age;
+  const ageEl = $("mAge"), latEl = $("mLat");
+  ageEl.querySelector("b").textContent = age==null ? "—" : fmt(age,2)+" s";
+  ageEl.classList.toggle("stale", age!=null && age>0.6);
+  latEl.querySelector("b").textContent = s.loop_ms==null ? "—" : Math.round(s.loop_ms)+" ms";
+  latEl.classList.toggle("stale", s.loop_ms>150);
+  $("mNear").querySelector("b").textContent = s.near==null ? "—" : fmt(s.near,2)+" m";
+  $("telRate").textContent = fps ? fps.toFixed(1)+" Hz" : "";
 
-// ---- state poll ----
-function pill(id,on,warn){const e=$(id);e.className='pill'+(on?' on':(warn?' warn':''));}
-async function poll(){try{const s=await(await fetch('/state')).json();
-  const h=s.health||{};
-  pill('p_lidar',h.lidar);pill('p_vesc',h.vesc);pill('p_steer',h.steer);pill('p_cam',h.cam);
-  pill('p_det',h.detector,false);
-  // LOC only means something on a saved map; amber = navigating with a pose we
-  // do NOT trust, which is exactly when auto-drive refuses to move.
-  pill('p_loc',h.loc,mode==='navigate' && !h.loc);
-  const d=s.drive||{};
-  armed=!!d.armed && !d.estop;                 // keep auto-arm flag in sync
-  estopped=!!d.estop;
-  $('estop').classList.toggle('latched',estopped);
-  $('clearstop').className=estopped?'':'hide';
-  if(!estopped && $('khint').textContent.indexOf('E-STOP is latched')>=0){
-    $('khint').innerHTML='⌨ hold <b>W</b>/<b>S</b> drive · <b>A</b>/<b>D</b> steer (springs back) · <b>SPACE</b> = E-STOP';}
-  $('armpill').textContent=d.estop?'E-STOP':(d.armed?'ARMED':'DISARMED');
-  $('armpill').className='pill'+(d.armed&&!d.estop?' on':(d.estop?' warn':''));
-  const t=s.tele||{};
-  $('t_speed').textContent=(t.speed!=null?t.speed:0).toFixed(2);
-  $('t_duty').textContent=(d.duty!=null?d.duty:0);
-  $('t_dutybar').style.width=Math.min(100,Math.abs(d.duty||0)*5)+'%';
-  $('t_head').textContent=(s.heading!=null?Math.round(s.heading):'—');
-  $('t_volt').textContent=(t.v_in!=null?t.v_in:'—');
-  $('t_voltbar').style.width=(t.v_in?Math.max(0,Math.min(100,(t.v_in-9)/(12.6-9)*100)):0)+'%';
-  $('t_tmos').textContent=(t.temp_mos!=null?t.temp_mos:'—');
-  const f=t.fault||'—';$('t_fault').textContent=f;$('t_fault').style.color=(f==='NONE'||f==='—')?'var(--ac)':'var(--red)';
-  // navigate info
-  const ff=s.follow||{};
-  if(mode==='navigate'){$('navinfo').textContent=
-    (s.goal?('goal '+s.goal.join(', ')+' · '+(s.reachable?('route '+s.path_len+' cells'):'NO ROUTE')):'click a point on the map to set a destination')
-    +(ff.on?('  ▶ '+(ff.note||'driving')):(ff.arrived?'  ✔ arrived':''));}
-  if(mode==='map'){$('mapinfo').textContent='frames: '+(s.frames||0)+'  ·  drive slowly, cover the room, SAVE MAP';}
-  // detections
-  if(mode==='perception'){const dv=$('dets');const ds=s.front_dets||[];
-    dv.innerHTML=ds.length?ds.map(x=>'<div class="d'+(x.vru?' vru':'')+'"><span>'+x.name+'</span><span>'+Math.round(x.conf*100)+'%</span></div>').join(''):'<div class=hint>no objects detected</div>';}
- }catch(e){} setTimeout(poll,300);}
+  if(UI.live && (UI.mode==="map" || UI.mode==="navigate"))
+    $("sceneImg").src = "/map.jpg?"+Date.now();
+  if(UI.mode==="map"){
+    const n = $("mapNote");
+    if(n && s.frames!=null) n.textContent = s.frames+" scans integrated · drive slowly, then SAVE MAP";
+  }
+  if(UI.mode==="perception"){
+    const ds = s.front_dets||[];
+    $("dets").innerHTML = ds.length
+      ? ds.map(d => `<div class="d ${d.vru?"vru":""}"><b>${d.name}</b><span>${Math.round(d.conf*100)}%</span></div>`).join("")
+      : '<div class="empty">no objects detected</div>';
+  }
+  const nav = s.follow||{};
+  if(UI.mode==="navigate"){
+    const n = $("goalNote");
+    if(n && nav.note) { n.className = "note ok"; n.textContent = nav.note; }
+  }
+  setTimeout(tick, 140);        // control-relevant state under the 150 ms budget
+}
 
-setMode('drive');poll();poll3d();
-</script></body></html>"""
+function frame(ts){
+  if(!fpsT) fpsT = ts;
+  frames++;
+  if(ts-fpsT > 1000){ fps = frames*1000/(ts-fpsT); frames = 0; fpsT = ts; }
+  if(ts - lastPaint > 200){     // 5 Hz repaint — humans read 2–5 updates/s
+    lastPaint = ts;
+    if(!UI.live) SCAN = mockScan(ts/1000);
+    if(lastState) drawScene(lastState);
+  }
+  requestAnimationFrame(frame);
+}
+
+resize();
+logEvent("cockpit up · day mode");
+renderAct(); setMode("drive");
+tick();
+requestAnimationFrame(frame);
+</script>
+
+</body></html>"""
 
 
 # A browser that navigates away, refreshes, or swaps an <img> src drops the socket
