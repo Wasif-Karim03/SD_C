@@ -44,6 +44,11 @@ from drivers.camera import Camera                          # noqa: E402
 from perception.slam import LidarSLAM, RES, SIZE, ORIGIN   # noqa: E402
 from perception import planner as P                        # noqa: E402
 from perception.lidar_nav import LidarNavigator           # noqa: E402
+try:
+    from recording.recorder import Recorder                 # noqa: E402
+except Exception as _rec_err:                               # noqa: BLE001
+    Recorder = None
+    print("  [rec] session recording unavailable:", _rec_err)
 
 HTTP_PORT = 8080
 OUT = 500                       # map render size (px)
@@ -126,6 +131,15 @@ class Hub:
         self.near_m = None               # nearest obstacle ahead, metres
         self.loop_ms = None              # measured control-loop period
 
+        # --- session recording (see recording/README.md) --------------------
+        # The recorder owns no hardware: the loops below feed it, so recording
+        # can never contend for a serial port. OFF by default — recording is a
+        # deliberate act, not a background cost.
+        self.rec = None
+        self.rec_lock = threading.Lock()
+        self._scan_arrival = 0.0     # arrival time of the newest scan we logged
+        self._rec_scan_seq = None    # links each telemetry row to a revolution
+
         # frame buffers (jpeg bytes)
         self.front_jpg = _placeholder("FRONT CAMERA")
         self.rear_jpg = _placeholder("REAR CAMERA — off")
@@ -200,6 +214,15 @@ class Hub:
                 self.lidar.stop()
             except Exception:
                 pass
+        # Recorder LAST. Closing it can block for up to the writer-join timeout,
+        # and nothing may sit between Ctrl-C and the motor being zeroed. The log
+        # is flushed as it is written, so the only thing this adds is marking
+        # meta.json complete — which is how you tell a full session from a
+        # killed one.
+        try:
+            self.stop_recording()
+        except Exception:                                    # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------ #
     #  mode switching (this is what keeps memory in budget)
@@ -305,8 +328,23 @@ class Hub:
                 time.sleep(0.2); continue
             scan, age = self.lidar.latest()
             if scan and age < 1.0:
+                now = time.monotonic()
+                # latest() re-serves the SAME revolution between sensor updates
+                # (~10 Hz sensor, 20 Hz poll). Recording it twice would claim a
+                # scan rate the C1 cannot deliver, so log only genuinely new
+                # revolutions — identified by their arrival time, not poll time.
+                arrival = now - age
+                is_new = arrival > self._scan_arrival + 1e-6
+                self._scan_arrival = arrival
                 self.last_scan = scan
-                self.last_scan_t = time.monotonic()
+                self.last_scan_t = now
+                rec = self.rec
+                if is_new and rec is not None:
+                    try:
+                        # Stamp with when the scan ARRIVED, not when we noticed it.
+                        self._rec_scan_seq = rec.log_scan(scan, t=rec.now() - age)
+                    except Exception:                        # noqa: BLE001
+                        pass
                 # Nearest obstacle ahead, published for the UI's clearance tile. Computed
                 # here (once per scan) rather than in the follow loop, so it is available
                 # in every mode and never derives from a scan the UI can't age-check.
@@ -479,6 +517,7 @@ class Hub:
             with C_LOCK:
                 estop = CTRL["estop"]; armed = CTRL["armed"]
                 target = CTRL["throttle"]
+                steer_cmd = CTRL["steer"]
                 fresh = (now - CTRL["last_cmd"]) < DEADMAN_S
             if estop or not armed or not fresh:
                 target = 0.0
@@ -493,7 +532,77 @@ class Hub:
             with S_LOCK:
                 STATE["drive"] = {"armed": armed, "estop": estop,
                                   "duty": round(duty * 100, 1)}
+                tele = STATE.get("tele") or {}
+                pose = STATE.get("pose") or (None, None, None)
+
+            # --- session recording -------------------------------------------
+            # This loop is the right place: it is the only one that sees the
+            # ACTUAL commanded duty (post deadman, post cap, post ramp) at the
+            # 20 Hz control rate. VESC telemetry refreshes at ~3 Hz, so those
+            # columns are carried forward — documented in recording/README.md.
+            rec = self.rec
+            if rec is not None:
+              try:
+                rec.log({
+                    "cmd_duty": duty, "cmd_steer": steer_cmd,
+                    "mode": self.mode, "armed": armed, "estop": estop,
+                    "follow_on": FOLLOW["on"],
+                    "erpm": tele.get("erpm"), "tach": tele.get("tach"),
+                    "v_in": tele.get("v_in"),
+                    "motor_current": tele.get("motor_current"),
+                    "temp_mos": tele.get("temp_mos"),
+                    "temp_motor": tele.get("temp_motor"),
+                    "fault": tele.get("fault"), "speed_mps": tele.get("speed"),
+                    "pose_x": pose[0], "pose_y": pose[1], "pose_yaw": pose[2],
+                    "scan_seq": self._rec_scan_seq,
+                    "scan_age": (now - self.last_scan_t) if self.last_scan_t else None,
+                    "near_m": self.near_m,
+                })
+              except Exception:                              # noqa: BLE001
+                pass
             time.sleep(0.05)
+
+    # ------------------------------------------------------------------ #
+    #  session recording
+    # ------------------------------------------------------------------ #
+    def start_recording(self, note=""):
+        """Begin a session. Idempotent; never raises into the caller."""
+        if Recorder is None:
+            return False
+        with self.rec_lock:
+            if self.rec is not None:
+                return True
+            try:
+                self.rec = Recorder(note=note, source="cockpit").start()
+                self._rec_scan_seq = None
+                return True
+            except Exception as e:                          # noqa: BLE001
+                print("  [rec] start failed:", e)
+                self.rec = None
+                return False
+
+    def stop_recording(self):
+        with self.rec_lock:
+            rec, self.rec = self.rec, None
+        if rec is None:
+            return None
+        try:
+            return rec.stop()
+        except Exception as e:                              # noqa: BLE001
+            print("  [rec] stop failed:", e)
+            return None
+
+    def rec_status(self):
+        rec = self.rec
+        if rec is None:
+            return {"on": False}
+        try:
+            st = rec.stats()
+            return {"on": True, "rows": st["telemetry"], "scans": st["scans"],
+                    "secs": st["duration_s"], "dropped": st["dropped"],
+                    "name": os.path.basename(st["dir"])}
+        except Exception:                                    # noqa: BLE001
+            return {"on": True}
 
     def set_steer(self, v):
         v = max(-1.0, min(1.0, v))
@@ -672,6 +781,7 @@ class Hub:
                 STATE["env"] = self.env
                 STATE["rear_on"] = self.rear_on
                 STATE["tele"] = tele
+                STATE["rec"] = self.rec_status()
                 if heading is not None:
                     STATE["heading"] = heading
                 lidar_ok = False
@@ -798,6 +908,10 @@ button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--t1);outlin
 .themebtn{padding:0 13px;font-family:"IBM Plex Mono",monospace;font-size:9.5px;
   letter-spacing:.11em;color:var(--t2);align-self:stretch}
 .themebtn:hover{color:var(--t1)}
+.themebtn.reccing{color:#ff5b5b;border-color:#ff5b5b}
+.themebtn.reccing::before{content:"";display:inline-block;width:6px;height:6px;
+  border-radius:50%;background:#ff5b5b;margin-right:6px;animation:recblink 1.4s infinite}
+@keyframes recblink{0%,49%{opacity:1}50%,100%{opacity:.15}}
 
 /* E-STOP — ISO 13850. Red on yellow, reserved. Never shrouded. */
 .estopwrap{align-self:stretch;display:flex;flex-direction:column;justify-content:center;
@@ -1000,6 +1114,7 @@ button:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--t1);outlin
     <div class="chips" id="chips"></div>
 
     <div class="barR">
+      <button class="themebtn" id="recbtn" title="Record this session to logs/">● REC</button>
       <button class="themebtn" id="themebtn">☾ NIGHT</button>
       <div class="estopwrap">
         <button class="estop" id="estop">■ E-STOP</button>
@@ -1117,13 +1232,18 @@ function applyTheme(){
   try{ localStorage.setItem("hmi", hmi); }catch(e){}
 }
 $("themebtn").onclick = () => { hmi = hmi==="night"?"day":"night"; applyTheme(); };
+$("recbtn").onclick = () => {
+  const on = !UI.rec;
+  cmd(on ? "rec=1" : "rec=0");
+  logEvent(on ? "recording started" : "recording stopped");
+};
 applyTheme();
 
 /* ── local UI state ── */
 const UI = {
   mode:"drive", autonomy:"MANUAL", cap:6,
   held:0, steerTarget:0, steerCur:0,
-  estop:false, armed:false, following:false, live:false
+  estop:false, armed:false, following:false, live:false, rec:false
 };
 const EV = [];
 function logEvent(text, kind){
@@ -1586,6 +1706,13 @@ async function tick(){
     $("keys").classList.remove("warn");
     $("keys").innerHTML = "hold <kbd>W</kbd><kbd>S</kbd> drive · <kbd>A</kbd><kbd>D</kbd> steer, springs back · <kbd>SPACE</kbd> E-STOP";
   }
+  const rc = s.rec || {};
+  UI.rec = !!rc.on;
+  $("recbtn").classList.toggle("reccing", UI.rec);
+  $("recbtn").textContent = UI.rec
+    ? `REC ${Math.round(rc.secs||0)}s · ${rc.scans||0} scans` : "● REC";
+  if(UI.rec && rc.dropped) $("recbtn").title = `${rc.dropped} samples DROPPED`;
+
   UI.following = !!(s.follow && s.follow.on);
   resetGo();
   renderState(s); renderChips(s); renderPreArm(s); renderTiles(s);
@@ -1785,6 +1912,14 @@ class H(BaseHTTPRequestHandler):
                 FOLLOW["on"] = False
                 with C_LOCK:
                     CTRL["throttle"] = 0.0
+        if "rec" in q:
+            if q["rec"][0] == "1":
+                note = q.get("note", [""])[0]
+                ok = HUB.start_recording(note=note)
+                print(f"[rec] {'started' if ok else 'FAILED to start'}", flush=True)
+            else:
+                st = HUB.stop_recording()
+                print(f"[rec] stopped: {st}", flush=True)
         if "save" in q:
             HUB.save_map()
         self._send(b"{}", "application/json")

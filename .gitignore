@@ -70,6 +70,12 @@ final updates/apps/lidar_*.png
 .claude/settings.local.json
 .DS_Store
 
+# --- Recorded sessions (recording/) ---------------------------------------
+# Sessions are data, not source: a 10-minute drive is ~10 MB of scans, and a
+# session with cameras on is ~1 GB/hour. Keep them out of the repo; archive the
+# ones worth keeping somewhere that is not git.
+final updates/logs/
+
 # ---------------------------------------------------------------------------
 # Explicitly KEPT, so a future broad pattern doesn't quietly swallow them:
 # ---------------------------------------------------------------------------
