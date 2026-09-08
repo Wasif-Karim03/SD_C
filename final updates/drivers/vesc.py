@@ -106,8 +106,12 @@ class VESC:
         hw = p[3:].split(b"\x00")[0].decode(errors="replace")
         return {"major": p[1], "minor": p[2], "hw": hw}
 
-    def get_values(self):
-        p = self._query(bytes([COMM_GET_VALUES]))
+    def get_values(self, settle=0.05):
+        # `settle` is how long to wait before reading the reply. The 0.05 default is
+        # deliberately conservative (~20 Hz ceiling). _recv's read() blocks up to the
+        # port timeout anyway, so a caller that needs a faster telemetry rate -- e.g.
+        # apps/sysid.py measuring a step response -- can safely pass settle=0.005.
+        p = self._query(bytes([COMM_GET_VALUES]), settle=settle)
         if not p or p[0] != COMM_GET_VALUES or len(p) < 30:
             return None
         i = 1
