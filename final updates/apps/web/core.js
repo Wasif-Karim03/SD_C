@@ -55,6 +55,16 @@
     } catch (e) { if (m) TOKEN = decodeURIComponent(m[1]); }
   })();
 
+  /* ?nocam=1 — do not subscribe to the camera streams at all.
+     Two reasons, and both are real:
+       · a tunnel or a phone on cellular chokes on two permanently-open MJPEG
+         connections long before it struggles with the JSON polls;
+       · a public link to this page is a public link to a live view of
+         whatever room the car is standing in.
+     Everything else — the scenes, telemetry, the map — is plain polling and
+     works fine without them. */
+  var NOCAM = /[?&]nocam=1/.test(location.search);
+
   var pending = 0;
   var authFailed = false;
   function post(qs) {
@@ -455,8 +465,12 @@
 
     /* cameras — only the visible ones are subscribed, because each MJPEG
        stream is a live socket and a hidden one is pure cost on an 8 GB box */
-    $('rear-off').style.display = S.rear_on ? 'none' : 'flex';
-    $('rear-off2').style.display = S.rear_on ? 'none' : 'flex';
+    $('rear-off').style.display = (S.rear_on && !NOCAM) ? 'none' : 'flex';
+    $('rear-off2').style.display = (S.rear_on && !NOCAM) ? 'none' : 'flex';
+    if (NOCAM) {
+      $('rear-off').textContent = 'video off for this link';
+      $('rear-off2').textContent = 'video off for this link';
+    }
     $('rear-toggle').setAttribute('aria-pressed', S.rear_on ? 'true' : 'false');
     $('rec-btn').firstChild.nodeValue = rec.on ? 'STOP RECORDING' : 'START RECORDING';
     $('cmd-arm').setAttribute('aria-pressed', d.armed ? 'true' : 'false');
@@ -524,11 +538,16 @@
     D.querySelectorAll('#rail button[data-screen]').forEach(function (b) {
       b.setAttribute('aria-current', b.dataset.screen === name ? 'true' : 'false');
     });
-    /* MJPEG sockets follow the visible screen */
-    $('img-front').src  = name === 'drive'  ? '/cam/front.mjpg' : '';
-    $('img-rear').src   = (name === 'drive'  && S.rear_on) ? '/cam/rear.mjpg' : '';
-    $('img-front2').src = name === 'vision' ? '/cam/front.mjpg' : '';
-    $('img-rear2').src  = (name === 'vision' && S.rear_on) ? '/cam/rear.mjpg' : '';
+    /* MJPEG sockets follow the visible screen, and only when cameras are on
+       at all. Each stream is a connection held open for as long as the panel
+       is visible — cheap on a LAN, and the single most expensive thing you
+       can push through a tunnel, which is why ?nocam=1 exists. */
+    var cf = (!NOCAM && name === 'drive')  ? '/cam/front.mjpg' : '';
+    var cr = (!NOCAM && name === 'drive'  && S.rear_on) ? '/cam/rear.mjpg' : '';
+    var vf = (!NOCAM && name === 'vision') ? '/cam/front.mjpg' : '';
+    var vr = (!NOCAM && name === 'vision' && S.rear_on) ? '/cam/rear.mjpg' : '';
+    $('img-front').src = cf; $('img-rear').src = cr;
+    $('img-front2').src = vf; $('img-rear2').src = vr;
     $('slamimg').src    = name === 'position' ? '/map.jpg?t=' + Date.now() : '';
     resize();
     try { localStorage.setItem('rc.screen', name); } catch (e) {}

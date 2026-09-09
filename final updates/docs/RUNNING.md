@@ -95,6 +95,14 @@ Be clear-eyed about what this is: a shared secret over plain HTTP. It is a
 lock on a door, not a security system, and it is worth exactly that much. The
 real isolation is a network only you are on.
 
+## Reaching it from outside your network
+
+`docs/REMOTE_ACCESS.md` covers both cases: Tailscale for your own devices from
+anywhere, and a Cloudflare quick tunnel for a link you can send someone. The
+short version: monitor from anywhere, drive on the LAN in the same room. The
+deadman is 500 ms and internet jitter will trip it constantly, which is the
+safety system working correctly and awful to drive through.
+
 ## Working on the interface without the car
 
 ```
