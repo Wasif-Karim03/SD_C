@@ -49,8 +49,14 @@ try:
 except Exception as _rec_err:                               # noqa: BLE001
     Recorder = None
     print("  [rec] session recording unavailable:", _rec_err)
+try:
+    from drivers.gps_stream import ThreadedGPS               # noqa: E402
+except Exception as _gps_err:                               # noqa: BLE001
+    ThreadedGPS = None
+    print("  [gps] GNSS stream unavailable:", _gps_err)
 
 HTTP_PORT = 8080
+WEB_DIR = os.path.join(HERE, "web")     # static front end, served at /web/
 OUT = 500                       # map render size (px)
 MAP_PATH = os.path.join(ROOT, "maps", "room.npy")
 MAP_DIR = os.path.join(ROOT, "maps")
@@ -81,6 +87,43 @@ PATH = {"cells": None, "world": None}
 FOLLOW = {"on": False, "arrived": False, "note": ""}
 
 BLANK = None                    # placeholder jpeg
+
+
+def _session_info():
+    """Which code is flying. A screenshot of a run is worth very little if you
+    cannot tell afterwards which commit produced it, so the commit — and
+    whether the tree was dirty — is on the screen the whole time."""
+    sha, dirty = "unknown", False
+    try:
+        import subprocess
+        sha = subprocess.check_output(
+            ["git", "-C", ROOT, "rev-parse", "--short", "HEAD"],
+            stderr=subprocess.DEVNULL, timeout=3).decode().strip()
+        dirty = bool(subprocess.check_output(
+            ["git", "-C", ROOT, "status", "--porcelain"],
+            stderr=subprocess.DEVNULL, timeout=3).decode().strip())
+    except Exception:                                        # noqa: BLE001
+        pass
+    return {"sha": sha, "dirty": dirty,
+            "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "epoch_ms": int(time.time() * 1000)}
+
+
+# Snapshot of the constants the cockpit draws with. Sent once per poll so the
+# front end never carries its own copy of a calibration number; "est" names the
+# ones that are still guesses, and the DIAGNOSE screen marks them as such.
+CONFIG_SNAPSHOT = {
+    "wheelbase": config.WHEELBASE_M,
+    "maxSteer": config.MAX_STEER_ANGLE_RAD,
+    "lookahead": LOOKAHEAD_M,
+    "goalTol": GOAL_TOL_M,
+    "steerGain": STEER_GAIN,
+    "react": REACT_M,
+    "forwardDeg": config.LIDAR_FORWARD_DEG,
+    "maxDuty": config.MAX_DUTY,
+    "mpt": config.METERS_PER_TACH,
+    "est": ["WHEELBASE_M", "MAX_STEER_ANGLE_RAD"],
+}
 
 
 def _jpeg(img, quality=70):
@@ -131,6 +174,13 @@ class Hub:
         self.near_m = None               # nearest obstacle ahead, metres
         self.loop_ms = None              # measured control-loop period
 
+        # GNSS. Outdoor-only by nature: indoors this reports fix=False, which
+        # is the truth, rather than a degraded position the operator might act
+        # on. Nothing in the control path depends on it.
+        self.gps = None
+        self.session = _session_info()
+        self._trail = []                 # recent world-frame poses (breadcrumbs)
+
         # --- session recording (see recording/README.md) --------------------
         # The recorder owns no hardware: the loops below feed it, so recording
         # can never contend for a serial port. OFF by default — recording is a
@@ -176,6 +226,12 @@ class Hub:
         except Exception as e:  # noqa: BLE001
             print("  front camera n/a:", e)
 
+        if ThreadedGPS is not None:
+            try:
+                self.gps = ThreadedGPS().start()
+            except Exception as e:  # noqa: BLE001
+                print("  GNSS n/a:", e)
+
         self.running = True
         for fn in (self._lidar_loop, self._front_loop, self._rear_loop,
                    self._map_loop, self._actuator_loop, self._follow_loop,
@@ -212,6 +268,11 @@ class Hub:
         if self.lidar:
             try:
                 self.lidar.stop()
+            except Exception:
+                pass
+        if self.gps:
+            try:
+                self.gps.stop()
             except Exception:
                 pass
         # Recorder LAST. Closing it can block for up to the writer-join timeout,
@@ -356,8 +417,19 @@ class Hub:
                     self.slam.add_scan(scan)
                 if self.mode == "navigate" and self.loc is not None:
                     self.loc.update(scan)
+                    pose = self.loc.pose
                     with S_LOCK:
-                        STATE["pose"] = [round(v, 2) for v in self.loc.pose]
+                        STATE["pose"] = [round(v, 2) for v in pose]
+                    # Breadcrumbs. Bounded on purpose: this is drawn every
+                    # frame and serialised every poll, so it is a display
+                    # buffer, not a log. The log is recording/, which keeps
+                    # every sample and does not have to be cheap.
+                    if (not self._trail or
+                            math.hypot(pose[0] - self._trail[-1][0],
+                                       pose[1] - self._trail[-1][1]) > 0.05):
+                        self._trail.append((pose[0], pose[1]))
+                        if len(self._trail) > 400:
+                            del self._trail[0]
             time.sleep(0.05)
 
     def _front_loop(self):
@@ -374,9 +446,15 @@ class Hub:
                     dets = self.detector.detect(frame)
                     self.front_dets = dets
                     self.detector.draw(frame, dets)
+                    h_, w_ = frame.shape[:2]
                     with S_LOCK:
+                        # normalised boxes: the browser scales the video to fit
+                        # its panel, so pixel coordinates from a 640x480 frame
+                        # would land in the wrong place on every screen size
                         STATE["front_dets"] = [
-                            {"name": d["name"], "conf": round(d["conf"], 2), "vru": d["vru"]}
+                            [round(d["box"][0] / w_, 4), round(d["box"][1] / h_, 4),
+                             round(d["box"][2] / w_, 4), round(d["box"][3] / h_, 4),
+                             d["name"], round(d["conf"], 2)]
                             for d in dets]
                 except Exception as e:  # noqa: BLE001
                     print("[perception] detect error:", e)
@@ -714,11 +792,14 @@ class Hub:
             car_heading = th + math.radians(FOLLOW_FORWARD_DEG)
             err = (desired - car_heading + math.pi) % (2 * math.pi) - math.pi
             steer = max(-1.0, min(1.0, FOLLOW_STEER_SIGN * STEER_GAIN * err))
+            pursuit_term = steer
+            veto_term = None
             # scan is guaranteed fresh by the gate above. Both steer terms now share
             # config.STEER_SIGN, so blending them can no longer cancel out.
             nav = self.nav.plan(scan)
             blocked = nav["blocked"]; near = nav["nearest_ahead_m"]
             if not blocked and near < REACT_M:
+                veto_term = nav["steer"]
                 steer = max(-1.0, min(1.0, 0.5 * steer + 0.5 * nav["steer"]))
             duty = DUTY_OUTDOOR if self.env == "outdoor" else DUTY_INDOOR
             if blocked:
@@ -732,9 +813,22 @@ class Hub:
                 blocked_since = None
                 self._drive(duty, steer)
                 FOLLOW["note"] = f"driving {dgoal:.2f}m to goal"
+            # perpendicular distance to the route: the number that says whether
+            # the car is ON the plan, as opposed to merely heading toward it
+            xtrack = None
+            wp = PATH.get("world")
+            if wp:
+                xtrack = min(math.hypot(px - x, py - y) for (px, py) in wp)
             with S_LOCK:
                 STATE["follow"] = {"on": FOLLOW["on"], "arrived": FOLLOW["arrived"],
-                                   "note": FOLLOW["note"]}
+                                   "note": FOLLOW["note"],
+                                   "heading_err": round(math.degrees(err), 2),
+                                   "cross_track": (round(xtrack, 3)
+                                                   if xtrack is not None else None),
+                                   "steer_pursuit": round(pursuit_term, 3),
+                                   "steer_veto": (round(veto_term, 3)
+                                                  if veto_term is not None else 0.0),
+                                   "icp_fail": getattr(self.loc, "fails", None)}
 
     # ------------------------------------------------------------------ #
     #  telemetry
@@ -794,7 +888,61 @@ class Hub:
                     "steer": self.steer is not None, "cam": self.front is not None,
                     "detector": self.detector is not None,
                 }
+                # The commanded side of every pair the cockpit draws. Without
+                # this the front end can only show what the car DID, never what
+                # it was ASKED to do — and the gap between those two is the
+                # single most useful thing on the screen.
+                with C_LOCK:
+                    STATE["ctrl"] = {"armed": CTRL["armed"], "estop": CTRL["estop"],
+                                     "throttle": round(CTRL["throttle"], 4),
+                                     "steer": round(CTRL["steer"], 3)}
+                STATE["gps"] = self.gps.snapshot() if self.gps else {
+                    "fix": False, "present": False, "satlist": []}
+                STATE["session"] = self.session
+                STATE["config"] = CONFIG_SNAPSHOT
+                STATE.update(self._local_frame(STATE.get("pose")))
             time.sleep(0.3)
+
+    def _local_frame(self, pose):
+        """World-frame nav geometry expressed in the CAR frame, in metres.
+
+        The scenes are all track-up: forward is +x, and lateral is +y to the
+        side the LiDAR calls positive. Doing this rotation on the server keeps
+        one definition of "where the nose points" in the codebase instead of
+        two that can drift apart.
+
+        The pose is passed IN rather than read from STATE, because the only
+        caller already holds S_LOCK and threading.Lock is not reentrant —
+        re-acquiring it here would deadlock the telemetry thread on the first
+        pass and freeze every number on the screen. Nothing in this method may
+        take that lock.
+        """
+        out = {"path_local": None, "goal_local": None, "lookahead_local": None,
+               "trail_local": None, "goal_dist": None}
+        if not pose:
+            return out
+        x, y, th = pose[0], pose[1], pose[2]
+        c, s = math.cos(-th), math.sin(-th)
+
+        def to_car(px, py):
+            dx, dy = px - x, py - y
+            return [round(dx * c - dy * s, 3), round(dx * s + dy * c, 3)]
+
+        wp = PATH.get("world")
+        if wp:
+            # thin it: 60 points is more than any 700-px scene can resolve, and
+            # this payload is fetched several times a second
+            step = max(1, len(wp) // 60)
+            out["path_local"] = [to_car(px, py) for (px, py) in wp[::step]]
+            gx, gy = wp[-1]
+            out["goal_local"] = to_car(gx, gy)
+            out["goal_dist"] = round(math.hypot(gx - x, gy - y), 2)
+            tgt = self._pursuit_target(x, y)
+            if tgt:
+                out["lookahead_local"] = to_car(tgt[0], tgt[1])
+        if self._trail:
+            out["trail_local"] = [to_car(px, py) for (px, py) in self._trail]
+        return out
 
     def save_map(self):
         if self.slam is None:
@@ -1820,10 +1968,43 @@ class H(BaseHTTPRequestHandler):
         except Exception:
             pass
 
+    def _static(self, rel):
+        """Serve the front end from disk.
+
+        From disk rather than from a string in this file, on purpose: the CSS
+        and the scene renderers are now big enough that they should be editable
+        and reloadable without restarting the process that is holding the
+        serial ports open.
+        """
+        rel = rel.lstrip("/")
+        full = os.path.normpath(os.path.join(WEB_DIR, rel))
+        # containment check FIRST — this server is reachable from the whole LAN
+        if not full.startswith(WEB_DIR + os.sep) or not os.path.isfile(full):
+            self.send_error(404); return
+        ctype = {".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8",
+                 ".js": "application/javascript; charset=utf-8", ".json": "application/json",
+                 ".png": "image/png", ".jpg": "image/jpeg", ".svg": "image/svg+xml",
+                 ".woff2": "font/woff2", ".map": "application/json"
+                 }.get(os.path.splitext(full)[1].lower(), "application/octet-stream")
+        try:
+            with open(full, "rb") as fh:
+                self._send(fh.read(), ctype)
+        except OSError:
+            self.send_error(404)
+
     def do_GET(self):
         p = urlparse(self.path).path
         if p == "/":
-            self._send(PAGE.encode(), "text/html; charset=utf-8")
+            index = os.path.join(WEB_DIR, "index.html")
+            if os.path.isfile(index):
+                self._static("index.html")
+            else:
+                # PAGE is the previous single-file cockpit, kept as a fallback
+                # so a missing web/ directory degrades to a working screen
+                # instead of a 404 on the machine you drive the car from.
+                self._send(PAGE.encode(), "text/html; charset=utf-8")
+        elif p.startswith("/web/"):
+            self._static(p[5:])
         elif p == "/cam/front.mjpg":
             self._mjpeg("front")
         elif p == "/cam/rear.mjpg":
@@ -1887,6 +2068,22 @@ class H(BaseHTTPRequestHandler):
                 HUB.set_steer(float(q["steer"][0]))
             except ValueError:
                 pass
+        if "goal_fwd" in q and "goal_lat" in q:
+            # The new scene is drawn in metres in the car frame, so it reports
+            # clicks in metres. Convert here rather than teaching the browser
+            # about map pixels, cell size and the map origin.
+            try:
+                fwd = float(q["goal_fwd"][0]); lat = float(q["goal_lat"][0])
+                with S_LOCK:
+                    pose = STATE.get("pose")
+                if pose:
+                    th = pose[2]
+                    wx = pose[0] + fwd * math.cos(th) - lat * math.sin(th)
+                    wy = pose[1] + fwd * math.sin(th) + lat * math.cos(th)
+                    col, row = LidarSLAM.world_to_px(wx, wy, OUT)
+                    HUB.set_goal(col, row)
+            except (ValueError, AttributeError, TypeError) as e:
+                print("[goal] metric goal refused:", e, flush=True)
         if "goalx" in q and "goaly" in q:
             try:
                 HUB.set_goal(float(q["goalx"][0]), float(q["goaly"][0]))

@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en" data-hmi="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>RoboCar — Mission Control</title>
+<!-- Fonts are vendored and served from this machine. The car is offline more
+     often than it is online, and the tabular figures are not decoration:
+     without them a changing digit shifts its neighbours sideways. -->
+<link rel="stylesheet" href="/web/fonts.css">
+<link rel="stylesheet" href="/web/leaflet.css" onerror="this.remove()">
+<link rel="stylesheet" href="/web/app.css">
+</head>
+<body>
+
+<div id="shell">
+
+  <!-- ══════════════════════════ HEADER ══════════════════════════ -->
+  <header id="head">
+    <div class="stack">
+      <span class="lbl lbl-d">AUTONOMY</span>
+      <span class="big" id="h-autonomy" style="color:var(--t2)">MANUAL</span>
+    </div>
+    <div class="vrule"></div>
+    <div class="stack">
+      <span class="lbl lbl-d">STATE</span>
+      <span class="big" id="h-state">DISARMED</span>
+    </div>
+    <div class="vrule"></div>
+    <div id="chips"></div>
+    <div class="grow"></div>
+    <div class="stack r">
+      <span class="lbl lbl-d">MET</span>
+      <span class="num" id="h-met" style="font-size:12px">00:00.0</span>
+    </div>
+    <div class="vrule"></div>
+    <div class="stack r">
+      <span class="lbl lbl-d" id="h-lat">CMD — ms &middot; VIDEO — ms</span>
+      <div id="linkbars"><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div class="stack c" style="margin-left:6px">
+      <button id="estop" type="button" title="Latches the drive motor off. Press Shift+Esc anywhere.">&#9632; STOP</button>
+      <span class="estop-cap">drive motor only &middot; not a hardware e-stop</span>
+    </div>
+  </header>
+
+  <!-- ══════════════════════ ALARM STRIP ══════════════════════ -->
+  <div id="strip" hidden>
+    <span class="flag"></span>
+    <span class="lbl sev" id="strip-sev">CAUTION</span>
+    <span class="msg" id="strip-msg"></span>
+    <span class="num" id="strip-t" style="font-size:10px;color:var(--t4)"></span>
+    <div class="grow"></div>
+    <span class="lbl lbl-d" id="strip-count"></span>
+  </div>
+
+  <!-- ══════════════════════════ BODY ══════════════════════════ -->
+  <div id="body">
+
+    <nav id="rail">
+      <button data-screen="drive"    aria-current="true"><span>DRIVE</span></button>
+      <button data-screen="vision"><span>VISION</span></button>
+      <button data-screen="position"><span>POSITION</span></button>
+      <button data-screen="diagnose"><span>DIAGNOSE</span></button>
+      <div class="rail-sp"></div>
+      <button id="hmi-toggle" title="Night / daylight ground"><span>GROUND</span></button>
+    </nav>
+
+    <div id="screens">
+
+      <!-- ─────────────────────── DRIVE ─────────────────────── -->
+      <section class="screen on" id="s-drive">
+        <div class="scene" id="radar-scene">
+          <canvas id="radar"></canvas>
+          <div class="ovl tl">
+            <span class="lbl" id="r-returns">LIDAR &middot; NO SCAN</span>
+            <span class="lbl lbl-d" id="r-sub">TRACK-UP &middot; FWD &mdash;&deg; &middot; COSTMAP + INFLATION</span>
+          </div>
+
+          <!-- both cameras, stacked. Rear is rotated 180 in CSS because the
+               camera is physically mounted upside down on the chassis. -->
+          <div class="ovl tr" style="width:198px;display:flex;flex-direction:column;gap:6px;pointer-events:auto">
+            <div class="camwrap well" style="height:122px" id="cam-front">
+              <img id="img-front" alt="">
+              <canvas class="dets" id="det-front"></canvas>
+              <div class="cap">FRONT &middot; <span id="cam-f-lat">— ms</span></div>
+              <div class="cap r">640&times;480</div>
+            </div>
+            <div class="camwrap well flip" style="height:96px" id="cam-rear">
+              <img id="img-rear" alt="">
+              <canvas class="dets" id="det-rear"></canvas>
+              <div class="cap">REAR &middot; 180&deg; &middot; <span id="cam-r-lat">— ms</span></div>
+              <div class="off" id="rear-off">rear camera released</div>
+            </div>
+            <button class="sk" id="rear-toggle" style="height:21px">REAR CAMERA<kbd>B</kbd></button>
+          </div>
+
+          <div class="ovl bl">
+            <span class="lbl">SCAN AGE <span class="num" id="r-age" style="color:var(--t1);font-size:11px">—</span><span class="u">s</span></span>
+            <span class="lbl">LOOP <span class="num" id="r-loop" style="color:var(--t1);font-size:11px">—</span><span class="u">Hz</span></span>
+            <span class="lbl">NEAREST <span class="num" id="r-near" style="color:var(--t1);font-size:11px">—</span><span class="u">m</span></span>
+            <span style="font-size:10px;color:var(--t4)" id="r-ttc"></span>
+          </div>
+          <div class="ovl br">
+            <div class="scalebar"></div><span class="lbl lbl-d" id="r-scale">1 m</span>
+          </div>
+        </div>
+
+        <div id="tapes">
+          <div class="tape" id="tape-speed">
+            <div class="cap lbl">SPEED</div>
+            <div class="track well"><div class="inner"></div></div>
+            <div class="read"><span class="num v">—</span><span class="u">m/s</span></div>
+          </div>
+          <div class="tape" id="tape-steer">
+            <div class="cap lbl" title="open loop — commanded only, no encoder">STEER<span class="u" style="font-size:8px"> cmd</span></div>
+            <div class="track well"><div class="inner"></div></div>
+            <div class="read"><span class="num v">—</span><span class="u">norm</span></div>
+          </div>
+        </div>
+
+        <aside id="side">
+          <div id="guidance">
+            <div class="lbl" style="margin-bottom:5px">GUIDANCE</div>
+            <div class="line" id="g-line">MANUAL <span class="sep">&#9656;</span> operator</div>
+          </div>
+          <div class="fill" id="mais"></div>
+          <div id="tune"></div>
+        </aside>
+      </section>
+
+      <!-- ─────────────────────── VISION ─────────────────────── -->
+      <section class="screen" id="s-vision" style="flex-direction:column">
+        <div style="flex:1;display:flex;min-height:0">
+          <div class="scene" id="vision-scene">
+            <canvas id="vision"></canvas>
+            <div class="ovl tl">
+              <span class="lbl">PSEUDO-3D &middot; 2D SCAN EXTRUDED <span id="v-ext">0.75</span> m &middot; CHASE CAM</span>
+              <span class="lbl lbl-d">NOT A 3D RECONSTRUCTION &mdash; ONE SCAN PLANE</span>
+            </div>
+            <div class="ovl bl legend">
+              <span class="lbl"><b style="background:var(--ref)"></b>PLANNED &middot; COMMANDED ROUTE</span>
+              <span class="lbl"><b style="background:var(--t1)"></b>PREDICTED FROM STEERING</span>
+              <span class="lbl">DIVERGENCE @ 2 s <span class="num" id="v-div" style="color:var(--t1);font-size:11px">—</span><span class="u">m</span></span>
+              <span class="lbl">TURN RADIUS <span class="num" id="v-rad" style="color:var(--t1);font-size:11px">—</span><span class="u">m</span></span>
+            </div>
+            <div class="ovl tr"><span class="lbl lbl-d" id="v-cam">CHASE CAM &middot; 62&deg; FOV &middot; EYE 1.32 m</span></div>
+          </div>
+          <div style="width:280px;flex:none;background:var(--panel);border-left:1px solid var(--edge-dark);display:flex;flex-direction:column">
+            <div class="camwrap" style="height:210px;border-bottom:1px solid var(--hair-3)">
+              <img id="img-front2" alt="">
+              <canvas class="dets" id="det-front2"></canvas>
+              <div class="cap">FRONT</div><div class="cap r">640&times;480</div>
+            </div>
+            <div class="camwrap flip" style="height:210px;border-bottom:1px solid var(--hair-3)">
+              <img id="img-rear2" alt="">
+              <canvas class="dets" id="det-rear2"></canvas>
+              <div class="cap">REAR &middot; 180&deg;</div>
+              <div class="off" id="rear-off2">rear camera released</div>
+            </div>
+            <div style="padding:9px 11px;flex:1;overflow:auto">
+              <div class="lbl" style="margin-bottom:7px">DETECTIONS</div>
+              <div id="detlist" class="hint">Detector loads in PERCEPTION mode only &mdash; it is not resident, to hold the 8&nbsp;GB budget.</div>
+            </div>
+          </div>
+        </div>
+        <div style="height:78px;flex:none;background:var(--panel);border-top:1px solid var(--edge-dark)">
+          <div id="seq"></div>
+        </div>
+      </section>
+
+      <!-- ─────────────────────── POSITION ─────────────────────── -->
+      <section class="screen" id="s-position">
+        <div class="scene" id="map-l" style="flex:1.25">
+          <div id="leaflet"></div>
+          <canvas id="mapfall"></canvas>
+          <div class="ovl tl">
+            <span class="lbl" id="p-fix">GNSS &middot; NO FIX</span>
+            <span class="lbl lbl-d" id="p-ll">&mdash;</span>
+          </div>
+          <div class="ovl br"><span class="lbl lbl-d" id="p-src">basemap: offline</span></div>
+        </div>
+        <div style="width:430px;flex:none;background:var(--panel);border-left:1px solid var(--edge-dark);display:flex;flex-direction:column;overflow:hidden">
+          <div class="scene" style="height:250px;flex:none;border-left:0">
+            <img id="slamimg" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain" alt="">
+            <div class="ovl tl"><span class="lbl">SLAM &middot; OCCUPANCY</span>
+              <span class="lbl lbl-d" id="p-slam">5 cm/cell &middot; 500 &times; 500</span></div>
+          </div>
+          <div style="padding:9px 11px;border-bottom:1px solid var(--hair-3)">
+            <div class="lbl" style="margin-bottom:6px">SKY VIEW &middot; C/N&#8320;</div>
+            <div id="sats" style="display:flex;gap:2px;align-items:flex-end;height:34px"></div>
+            <div class="hint" style="margin-top:5px" id="p-satnote">no satellite detail &mdash; GGA only</div>
+          </div>
+          <div style="padding:9px 11px;flex:1;overflow:auto">
+            <div class="lbl" style="margin-bottom:6px">POSE SOURCES &middot; EKF</div>
+            <table class="tbl"><thead><tr><th>SOURCE</th><th>STATE</th><th style="text-align:right">&#963;</th></tr></thead>
+              <tbody id="srclist"></tbody></table>
+            <div class="warn" style="margin-top:9px">Indoors there is no degraded fix &mdash; there is no fix.
+              GNSS is an outdoor-only input; the pose handed to the planner comes from SLAM.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ─────────────────────── DIAGNOSE ─────────────────────── -->
+      <section class="screen" id="s-diagnose" style="flex-direction:column">
+        <div class="grid2">
+          <div class="cell"><h3>Subsystems</h3><table class="tbl"><tbody id="d-health"></tbody></table></div>
+          <div class="cell"><h3>VESC telemetry</h3><table class="tbl"><tbody id="d-tele"></tbody></table></div>
+          <div class="cell"><h3>Calibration &middot; config.py</h3><table class="tbl"><tbody id="d-cal"></tbody></table>
+            <div class="hint" style="margin-top:8px">Values marked <span style="color:var(--caution)">EST</span>
+              are estimates, not measurements. They propagate into every predicted path on the VISION screen.</div></div>
+          <div class="cell"><h3>Session</h3><table class="tbl"><tbody id="d-sess"></tbody></table>
+            <div style="margin-top:10px;display:flex;gap:6px">
+              <button class="sk" id="rec-btn">START RECORDING<kbd>G</kbd></button>
+              <button class="sk" id="save-btn">SAVE MAP</button>
+            </div>
+            <input id="rec-note" placeholder="run note, e.g. corner regression, run 3 of 20"
+              style="margin-top:7px;width:100%;background:var(--well);border:1px solid var(--hair-3);
+                     color:var(--t1);font-family:inherit;font-size:11px;padding:5px 7px">
+          </div>
+        </div>
+      </section>
+
+    </div><!-- /screens -->
+  </div><!-- /body -->
+
+  <!-- ══════════════════════════ FOOTER ══════════════════════════ -->
+  <footer id="foot">
+    <div id="events">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span class="lbl">EVENT LOG</span>
+        <span class="lbl lbl-d" id="f-session">SESSION &mdash;</span>
+      </div>
+      <div id="eventlist"></div>
+    </div>
+    <div id="lanes">
+      <div style="display:flex;justify-content:space-between;margin-bottom:7px">
+        <span class="lbl">STATE &middot; LAST 60 s</span><span class="lbl lbl-d">NOW &rarr;</span>
+      </div>
+      <div id="lanebody"></div>
+      <div id="lanet"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    </div>
+    <div id="cmds">
+      <div class="lbl">COMMANDS</div>
+      <div class="skrow">
+        <button class="sk" id="cmd-arm" aria-pressed="false">ARM<kbd>SPC</kbd></button>
+        <button class="sk" id="cmd-disarm">DISARM<kbd>X</kbd></button>
+      </div>
+      <div class="skrow">
+        <button class="sk" id="cmd-go">GO<kbd>ENTER</kbd></button>
+        <button class="sk" id="cmd-mark">MARK<kbd>M</kbd></button>
+      </div>
+      <div id="slide" title="Drag right to clear a latched E-STOP">
+        <div class="fillbar"></div>
+        <span id="slide-label">SLIDE TO STOP</span>
+        <span class="chev">&rsaquo;&rsaquo;&rsaquo;</span>
+      </div>
+    </div>
+  </footer>
+
+  <div id="linkdown">
+    <div class="h">NO LINK TO VEHICLE</div>
+    <div class="hint" id="linkdown-sub">the numbers below are the last ones received, not live</div>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script src="/web/leaflet.js" onerror="window.__noLeaflet=1;this.remove()"></script>
+<script src="/web/widgets.js"></script>
+<script src="/web/radar.js"></script>
+<script src="/web/vision.js"></script>
+<script src="/web/position.js"></script>
+<script src="/web/core.js"></script>
+</body>
+</html>

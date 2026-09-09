@@ -1,0 +1,463 @@
+/* ══════════════════════════════════════════════════════════════════════════
+   RoboCar cockpit — instrument stylesheet.
+
+   Doctrine (ISA-101 High Performance HMI, adapted):
+     · The ground is neutral. Colour is spent ONLY on abnormal conditions,
+       so an operator glancing at the screen sees "something is wrong"
+       before reading a single word.
+     · MAGENTA is what was COMMANDED. WHITE is what the machine ACTUALLY did.
+       CYAN is a reference the machine is trying to reach. Green means a thing
+       is RUNNING — never "fine".
+     · Numbers are tabular and monospaced so a changing digit does not shift
+       the ones beside it. IBM Plex Mono's zero is dotted by default, which is
+       the whole reason it is here: 0 and O must never be confused in a
+       heading or a duty cycle.
+
+   Two grounds, one structure. data-hmi="night" is the bench/night ground;
+   data-hmi="day" is the same screen for carrying outdoors into sun.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  --ground:#0B0D0F;      /* page */
+  --well:#07090A;        /* recessed scene / instrument wells */
+  --panel:#15181B;       /* raised panels */
+  --panel-2:#0F1215;     /* secondary panel (tape column) */
+  --head-a:#191D21;      /* header gradient top */
+  --head-b:#15181B;      /* header gradient bottom */
+  --strip:#1A1D21;       /* alarm strip */
+
+  --t1:#E7EAED;          /* primary value */
+  --t2:#8F979E;          /* secondary text */
+  --t3:#697178;          /* label */
+  --t4:#4B5259;          /* de-emphasised label */
+
+  --hair:rgba(255,255,255,.07);
+  --hair-2:rgba(255,255,255,.05);
+  --hair-3:rgba(255,255,255,.09);
+  --edge-dark:rgba(0,0,0,.55);
+  --edge-light:rgba(255,255,255,.045);
+
+  --caution:#E4B23A;
+  --alarm:#B84A44;
+  --alarm-deep:#A81C24;
+  --go:#3AC085;          /* RUNNING, not "good" */
+  --cmd:#C74AC7;         /* commanded */
+  --ref:#3FB6C8;         /* reference / plan */
+  --ref-bright:#86D8E4;
+  --pts:#C6D4DB;         /* LiDAR returns */
+
+  --fill-idle:#252B31;
+  --fill-go:#2E4A3D;
+  --fill-caut:#5C4E22;
+  --fill-alarm:#4A2320;
+
+  --estop-face:#E9BC24;
+  --estop-text:#A81C24;
+
+  --scene-sky-a:#0D1114;
+  --scene-sky-b:#06080A;
+
+  --shade:0,0,0;         /* which way "recessed" points */
+}
+
+:root[data-hmi="day"] {
+  --ground:#BFC4C6;
+  --well:#ADB2B4;
+  --panel:#CBCFD1;
+  --panel-2:#C4C8CA;
+  --head-a:#D3D7D8;
+  --head-b:#C7CBCD;
+  --strip:#C9CDCF;
+
+  --t1:#16191B;
+  --t2:#474D51;
+  --t3:#5F666A;
+  --t4:#7A8084;
+
+  --hair:rgba(0,0,0,.13);
+  --hair-2:rgba(0,0,0,.09);
+  --hair-3:rgba(0,0,0,.16);
+  --edge-dark:rgba(0,0,0,.22);
+  --edge-light:rgba(255,255,255,.55);
+
+  --caution:#8A5B06;
+  --alarm:#9E1B22;
+  --alarm-deep:#8A1219;
+  --go:#1E7A4E;
+  --cmd:#93258F;
+  --ref:#0C6F7E;
+  --ref-bright:#0A5A66;
+  --pts:#39454C;
+
+  --fill-idle:#A5AAAC;
+  --fill-go:#7FA48C;
+  --fill-caut:#C0A868;
+  --fill-alarm:#C89A96;
+
+  --estop-face:#E8B71C;
+  --estop-text:#8A1219;
+
+  --scene-sky-a:#C3C8CA;
+  --scene-sky-b:#B2B7B9;
+}
+
+/* ─────────────────────────────── base ─────────────────────────────── */
+
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;background:var(--ground);color:var(--t1);
+  font-family:"IBM Plex Sans",ui-sans-serif,system-ui,-apple-system,sans-serif;
+  -webkit-font-smoothing:antialiased;
+  overflow:hidden;                 /* the cockpit never scrolls as a whole */
+  user-select:none;-webkit-user-select:none;
+  touch-action:manipulation;
+}
+a{color:var(--ref)} a:hover{color:var(--ref-bright)}
+
+.lbl{
+  font-size:9.5px;font-weight:600;line-height:12px;text-transform:uppercase;
+  letter-spacing:.10em;color:var(--t3);white-space:nowrap;
+}
+.lbl-d{color:var(--t4)}
+
+/* Every number on this screen is tabular. A digit that changes must not push
+   its neighbours sideways — motion in the periphery reads as an event. */
+.num{
+  font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  font-variant-numeric:tabular-nums lining-nums;
+  font-variant-ligatures:none;text-align:right;
+}
+.u{
+  color:var(--t3);font-size:.66em;letter-spacing:.02em;font-weight:400;
+  font-family:"IBM Plex Sans",sans-serif;
+}
+
+/* A recessed well: dark top edge, light bottom edge. Depth with no shadow,
+   so it survives being screenshotted, printed, or shown on a bad projector. */
+.well{
+  background:var(--well);
+  border-top:1px solid var(--edge-dark);
+  border-bottom:1px solid var(--edge-light);
+  border-left:1px solid rgba(var(--shade),.35);
+  border-right:1px solid rgba(255,255,255,.03);
+}
+:root[data-hmi="day"] .well{border-right:1px solid rgba(255,255,255,.4)}
+
+.kv{display:flex;justify-content:space-between;align-items:baseline}
+.hair{background:var(--hair)}
+.grow{flex:1}
+.vrule{width:1px;height:24px;background:var(--hair-3);flex:none}
+
+/* stale data: the value is dimmed and struck through rather than frozen.
+   A frozen number that looks live is the most dangerous thing on a cockpit. */
+.stale{opacity:.42;text-decoration:line-through;text-decoration-thickness:1px}
+
+/* ─────────────────────────────── chips ─────────────────────────────── */
+
+.chip{
+  display:flex;align-items:center;gap:5px;padding:0 7px;height:21px;
+  border:1px solid var(--hair-3);font-size:9.5px;font-weight:600;
+  letter-spacing:.08em;text-transform:uppercase;color:var(--t2);flex:none;
+}
+.chip b{
+  font-family:"IBM Plex Mono",monospace;font-weight:500;letter-spacing:0;
+  color:var(--t1);font-variant-numeric:tabular-nums;font-size:10px;
+}
+.chip.is-caution{border-color:color-mix(in srgb,var(--caution) 42%,transparent);color:var(--caution)}
+.chip.is-caution b{color:var(--caution)}
+.chip.is-alarm{border-color:color-mix(in srgb,var(--alarm) 55%,transparent);color:var(--alarm)}
+.chip.is-alarm b{color:var(--alarm)}
+.chip.is-go{border-color:color-mix(in srgb,var(--go) 40%,transparent);color:var(--go)}
+.chip.is-go b{color:var(--go)}
+
+/* ───────────────────────────── header ───────────────────────────── */
+
+#shell{width:100%;height:100%;display:flex;flex-direction:column}
+
+#head{
+  height:44px;flex:none;display:flex;align-items:center;gap:13px;padding:0 12px;
+  background:linear-gradient(var(--head-a),var(--head-b));
+  border-bottom:1px solid var(--edge-dark);
+  box-shadow:0 1px 0 var(--edge-light);
+}
+.stack{display:flex;flex-direction:column;gap:2px}
+.stack.r{align-items:flex-end}
+.stack.c{align-items:center}
+.big{font-size:12.5px;font-weight:600;letter-spacing:.14em}
+
+#chips{display:flex;gap:5px;min-width:0;overflow:hidden}
+
+#linkbars{display:flex;gap:2px;align-items:flex-end;height:11px}
+#linkbars i{width:3px;background:var(--fill-idle);display:block}
+#linkbars i.on{background:var(--t2)}
+
+/* The stop control. Yellow face, red legend — ISO 13850's colour pair, used
+   here deliberately even though this is a software stop, because the operator's
+   hand should go to the same place it would on a real machine. The caption
+   underneath is not decoration: it is the one thing that stops this button
+   from being trusted as a hardware e-stop, which it is not. */
+#estop{
+  background:var(--estop-face);padding:5px 17px 4px;border:0;cursor:pointer;
+  border-top:1px solid rgba(255,255,255,.35);border-bottom:1px solid rgba(0,0,0,.4);
+  font-family:inherit;font-size:12.5px;font-weight:600;letter-spacing:.16em;
+  color:var(--estop-text);display:block;
+}
+#estop:active{transform:translateY(1px)}
+#estop.latched{background:var(--alarm-deep);color:#FFF1EF;animation:latch 1.1s steps(1,end) infinite}
+@keyframes latch{50%{background:#6E1218}}
+.estop-cap{font-size:8px;letter-spacing:.02em;color:var(--t4);margin-top:3px}
+
+/* ──────────────────────────── alarm strip ──────────────────────────── */
+
+#strip{
+  height:25px;flex:none;display:flex;align-items:center;gap:9px;padding:0 12px;
+  background:var(--strip);border-bottom:1px solid var(--edge-dark);
+}
+#strip[hidden]{display:none!important}
+#strip .flag{width:3px;height:11px;display:inline-block;background:var(--caution)}
+#strip.is-alarm .flag{background:var(--alarm)}
+#strip .sev{color:var(--caution)}
+#strip.is-alarm .sev{color:var(--alarm)}
+#strip .msg{font-size:11px;color:var(--t1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ───────────────────────────── mode rail ───────────────────────────── */
+
+#rail{
+  width:50px;flex:none;background:var(--panel);
+  border-right:1px solid var(--edge-dark);display:flex;flex-direction:column;
+}
+#rail button{
+  height:62px;flex:none;display:flex;align-items:center;justify-content:center;
+  border:0;border-bottom:1px solid var(--hair-2);background:transparent;
+  cursor:pointer;padding:0;font-family:inherit;
+}
+#rail button span{
+  writing-mode:vertical-rl;transform:rotate(180deg);
+  font-size:9px;font-weight:600;letter-spacing:.13em;color:var(--t3);
+}
+#rail button:hover span{color:var(--t2)}
+#rail button[aria-current="true"]{background:var(--ground);box-shadow:inset 2px 0 0 var(--go)}
+#rail button[aria-current="true"] span{color:var(--t1)}
+#rail .rail-sp{flex:1}
+
+/* ───────────────────────────── screens ───────────────────────────── */
+
+#body{flex:1;display:flex;min-height:0}
+#screens{flex:1;display:flex;min-width:0}
+.screen{flex:1;display:none;min-width:0}
+.screen.on{display:flex}
+
+.scene{
+  flex:1;position:relative;background:var(--well);min-width:0;
+  border-top:1px solid var(--edge-dark);border-bottom:1px solid var(--hair-2);
+  overflow:hidden;
+}
+.scene canvas,.scene svg{display:block;position:absolute;inset:0;width:100%;height:100%}
+.ovl{position:absolute;pointer-events:none}
+.ovl.tl{left:14px;top:12px;display:flex;flex-direction:column;gap:3px}
+.ovl.tr{right:14px;top:12px}
+.ovl.bl{left:14px;bottom:12px;display:flex;gap:20px;align-items:baseline;flex-wrap:wrap}
+.ovl.br{right:14px;bottom:12px;display:flex;align-items:center;gap:7px}
+.scalebar{height:5px;border-left:1px solid var(--t3);
+  border-right:1px solid var(--t3);border-bottom:1px solid var(--t3)}
+.ovl.br .lbl{text-transform:none;letter-spacing:.02em}
+
+/* ─────────────────── moving analog indicator (MAI) ─────────────────── */
+/* Ranganathan's point, and every process-control text since: the operator
+   should read POSITION, not digits. The number is there for the log; the
+   pointer's place inside its band is what you actually perceive. */
+
+.mai{padding:7px 11px 8px;border-bottom:1px solid var(--hair-2)}
+.maitop{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px}
+.maitop .v{font-size:13px}
+.mai .row{display:flex;align-items:center;gap:9px}
+.bar{
+  position:relative;height:6px;background:var(--well);
+  border:1px solid var(--edge-dark);box-shadow:inset 0 1px 0 rgba(0,0,0,.4);flex:1;
+}
+.band{position:absolute;top:0;bottom:0;background:color-mix(in srgb,var(--ref) 15%,transparent)}
+.tick{position:absolute;top:-2px;bottom:-2px;width:1px;background:#565E65}
+:root[data-hmi="day"] .tick{background:#8A8F92}
+.ptr{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--t1);
+  transition:left .12s linear}
+.spark{flex:none;opacity:.85;line-height:0}
+
+/* ──────────────────────────── tapes ──────────────────────────── */
+/* A tape puts the value's POSITION on the same axis as its limits, so
+   "too fast" is a place on the screen, not a number you have to compare. */
+
+#tapes{width:112px;flex:none;display:flex;background:var(--panel-2);
+  border-left:1px solid var(--edge-dark)}
+.tape{flex:1;position:relative;display:flex;flex-direction:column;min-width:0}
+.tape .cap{text-align:center;padding:7px 0 4px}
+.tape .track{flex:1;position:relative;margin:0 5px}
+.tape .inner{position:absolute;top:8px;bottom:8px;left:0;right:0}
+.tape .bandmark{position:absolute;left:0;width:3px}
+.tape .gridline{position:absolute;left:5px;right:0;height:1px;background:var(--hair-2)}
+.tape .gridlbl{position:absolute;left:8px;font-size:8px;color:var(--t4);
+  font-family:"IBM Plex Mono",monospace;transform:translateY(-6px)}
+/* ACTUAL — white, the full width of the tape */
+.tape .act{position:absolute;left:5px;right:0;height:2px;background:var(--t1);
+  transition:top .12s linear}
+/* COMMANDED — magenta, a wedge on the outside edge. Never the same colour as
+   actual, so a controller that is not tracking is visible at a glance. */
+.tape .cmd{position:absolute;right:1px;width:0;height:0;
+  border-top:4.5px solid transparent;border-bottom:4.5px solid transparent;
+  border-right:8px solid var(--cmd);transform:translateY(-4.5px);
+  transition:top .12s linear}
+.tape .trend{position:absolute;left:52%;width:1.5px;
+  background:color-mix(in srgb,var(--t1) 32%,transparent)}
+.tape .read{text-align:center;padding:6px 0 7px}
+.tape .read .num{font-size:17px;letter-spacing:-.01em}
+.tape .read .u{font-size:8px;margin-top:1px;display:block;text-align:center}
+
+/* ─────────────────────────── right column ─────────────────────────── */
+
+#side{width:344px;flex:none;background:var(--panel);
+  border-left:1px solid var(--edge-dark);display:flex;flex-direction:column;
+  overflow:hidden}
+#guidance{padding:9px 11px 8px;border-bottom:1px solid var(--hair-3)}
+#guidance .line{font-size:11.5px;color:var(--t1);line-height:15px}
+#guidance .sep{color:var(--t4)}
+#side .fill{flex:1;min-height:0;overflow:auto}
+#tune{padding:9px 11px;border-top:1px solid var(--hair-3);
+  display:grid;grid-template-columns:1fr 1fr;gap:5px 16px}
+
+/* ───────────────────────────── footer ───────────────────────────── */
+
+#foot{
+  height:128px;flex:none;display:flex;background:var(--panel);
+  border-top:1px solid var(--edge-dark);box-shadow:inset 0 1px 0 var(--edge-light);
+}
+#foot > div{padding:8px 13px}
+#events{flex:1;min-width:0;border-right:1px solid rgba(var(--shade),.4);
+  display:flex;flex-direction:column}
+#eventlist{flex:1;overflow:auto;min-height:0}
+.ev{display:flex;gap:11px;align-items:baseline;padding:2px 0}
+.ev .t{font-size:10px;color:var(--t4);min-width:50px}
+.ev .lv{min-width:56px}
+.ev .m{font-size:10.5px;color:var(--t2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+#lanes{width:322px;flex:none;border-right:1px solid rgba(var(--shade),.4)}
+.lane{display:flex;align-items:center;gap:9px;margin-bottom:4px}
+.lane .lbl{width:50px}
+.lane .strip{flex:1;height:8px;display:flex;gap:1px}
+.lane .strip i{display:block;background:var(--fill-idle)}
+.lane .strip i.go{background:var(--fill-go)}
+.lane .strip i.caut{background:var(--fill-caut)}
+.lane .strip i.alarm{background:var(--fill-alarm)}
+#lanet{display:flex;margin-left:59px;margin-top:2px}
+#lanet i{flex:1;border-left:1px solid var(--hair-2);height:4px;display:block}
+
+#cmds{width:232px;flex:none;display:flex;flex-direction:column;gap:5px}
+.skrow{display:flex;gap:5px}
+.sk{
+  flex:1;height:25px;display:flex;align-items:center;justify-content:center;
+  border:1px solid var(--hair-3);background:transparent;cursor:pointer;
+  font-family:inherit;font-size:9.5px;font-weight:600;letter-spacing:.09em;color:var(--t2);
+}
+.sk:hover{border-color:var(--t3);color:var(--t1)}
+.sk[aria-pressed="true"]{background:var(--fill-go);color:var(--t1);border-color:transparent}
+.sk kbd{font-family:"IBM Plex Mono",monospace;font-size:9px;color:var(--t4);
+  margin-left:6px;font-weight:400}
+
+/* The stop-slide. A destructive-but-recoverable command that must not be
+   reachable by one stray click, per the same logic that puts a guard over a
+   physical switch. Drag it, or hold the key. */
+#slide{
+  height:27px;border:1px solid rgba(255,255,255,.20);display:flex;align-items:center;
+  justify-content:center;gap:7px;position:relative;overflow:hidden;cursor:ew-resize;
+  background:linear-gradient(var(--edge-light),transparent);
+}
+:root[data-hmi="day"] #slide{border-color:rgba(0,0,0,.28)}
+#slide .fillbar{position:absolute;left:0;top:0;bottom:0;width:0;background:var(--fill-alarm)}
+#slide span{position:relative;font-size:9.5px;font-weight:600;letter-spacing:.10em;color:var(--t1)}
+#slide .chev{position:relative;color:var(--t4);font-size:11px}
+
+/* ─────────────────────── camera surfaces ─────────────────────── */
+
+.camwrap{position:relative;overflow:hidden;line-height:0}
+.camwrap img{width:100%;height:100%;object-fit:cover;display:block}
+.camwrap.flip img{transform:rotate(180deg)}
+.camwrap .cap{position:absolute;left:7px;bottom:5px;font-size:8.5px;color:var(--t2);
+  font-family:"IBM Plex Mono",monospace;line-height:11px}
+.camwrap .cap.r{left:auto;right:7px;color:var(--t4)}
+.camwrap .dets{position:absolute;inset:0;pointer-events:none}
+.camwrap .off{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:var(--well);font-size:9.5px;letter-spacing:.10em;color:var(--t4);
+  text-transform:uppercase;font-weight:600}
+
+/* ─────────────────────── position screen ─────────────────────── */
+
+#map-l,#map-r{position:relative;min-width:0}
+#leaflet{position:absolute;inset:0;background:var(--well)}
+.leaflet-container{background:var(--well)!important;font-family:inherit!important}
+:root[data-hmi="night"] .leaflet-tile{filter:invert(1) hue-rotate(180deg) brightness(.78) contrast(1.05) saturate(.55)}
+.leaflet-control-attribution{font-size:8px!important;background:rgba(0,0,0,.45)!important;color:var(--t4)!important}
+.leaflet-control-attribution a{color:var(--t3)!important}
+#mapfall{position:absolute;inset:0}
+
+.tbl{width:100%;border-collapse:collapse;font-size:10px}
+.tbl td,.tbl th{padding:3px 6px;text-align:left;border-bottom:1px solid var(--hair-2)}
+.tbl th{font-size:9px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--t4)}
+.tbl td.n{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;
+  text-align:right;color:var(--t1)}
+.tbl tr.rej td{color:var(--t4)}
+.tbl tr.rej td.n{color:var(--caution)}
+
+/* ─────────────────────── vision screen ─────────────────────── */
+
+#seq{display:flex;height:100%;align-items:stretch}
+.seqstep{flex:1;padding:8px 11px;border-right:1px solid rgba(var(--shade),.4);
+  display:flex;flex-direction:column;gap:4px;min-width:0}
+.seqstep:last-child{border-right:0}
+.seqstep .n{font-size:9px;color:var(--t4);font-family:"IBM Plex Mono",monospace}
+.seqstep .nm{font-size:10px;font-weight:600;letter-spacing:.09em;text-transform:uppercase;color:var(--t3)}
+.seqstep .d{font-size:10px;color:var(--t4);line-height:13px}
+.seqstep.done .nm{color:var(--t2)}
+.seqstep.act{background:var(--well)}
+.seqstep.act .nm{color:var(--caution)}
+.seqstep.act .d{color:var(--t2)}
+
+.legend{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.legend b{display:inline-block;width:14px;height:2px;vertical-align:middle;margin-right:5px}
+
+/* ─────────────────────── diagnose screen ─────────────────────── */
+
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--edge-dark);
+  flex:1;min-width:0;min-height:0}
+.cell{background:var(--panel);padding:10px 12px;overflow:auto;min-width:0}
+.cell h3{margin:0 0 8px;font-size:9.5px;font-weight:600;letter-spacing:.10em;
+  text-transform:uppercase;color:var(--t3)}
+
+/* ─────────────────────── misc ─────────────────────── */
+
+.hint{font-size:10px;color:var(--t4);line-height:14px}
+.warn{font-size:10px;color:var(--caution);line-height:14px}
+#toast{
+  position:fixed;left:50%;bottom:150px;transform:translateX(-50%);
+  background:var(--panel);border:1px solid var(--hair-3);padding:7px 14px;
+  font-size:11px;color:var(--t1);pointer-events:none;opacity:0;
+  transition:opacity .18s;z-index:50;
+}
+#toast.on{opacity:1}
+
+/* Connection lost. Not a red banner that hides the numbers — the numbers go
+   stale-marked instead, and this says why. A dashboard that lies about being
+   live is worse than one that is plainly dead. */
+#linkdown{
+  position:absolute;inset:0;background:color-mix(in srgb,var(--ground) 82%,transparent);
+  display:none;align-items:center;justify-content:center;flex-direction:column;gap:6px;z-index:40;
+}
+#linkdown.on{display:flex}
+#linkdown .h{font-size:13px;font-weight:600;letter-spacing:.14em;color:var(--caution)}
+
+@media (max-width:1180px){
+  #side{width:280px}
+  #lanes{display:none}
+}
+@media (max-width:900px){
+  #side{display:none}
+  #tapes{width:88px}
+}
