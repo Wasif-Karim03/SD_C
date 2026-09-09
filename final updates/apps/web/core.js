@@ -41,11 +41,36 @@
 
   /* ─────────────────────────── commands ─────────────────────────── */
 
+  /* Optional command token. The server gates POST on it when ROBOCAR_TOKEN is
+     set; unset, none of this does anything. It arrives once in the URL
+     (?k=...) and is kept for the tab only - sessionStorage, not localStorage,
+     so closing the tab forgets it rather than leaving a driving credential on
+     a shared machine. */
+  var TOKEN = '';
+  (function () {
+    var m = /[?&]k=([^&]+)/.exec(location.search);
+    try {
+      if (m) { TOKEN = decodeURIComponent(m[1]); sessionStorage.setItem('rc.k', TOKEN); }
+      else { TOKEN = sessionStorage.getItem('rc.k') || ''; }
+    } catch (e) { if (m) TOKEN = decodeURIComponent(m[1]); }
+  })();
+
   var pending = 0;
+  var authFailed = false;
   function post(qs) {
     if (pending > 6) return Promise.resolve();     /* never queue commands */
     pending++;
+    if (TOKEN) qs += '&k=' + encodeURIComponent(TOKEN);
     return fetch('/?' + qs, { method: 'POST' })
+      .then(function (r) {
+        if (r && r.status === 403 && !authFailed) {
+          authFailed = true;
+          /* Say it once, plainly. A cockpit whose buttons silently do nothing
+             is worse than one that admits it cannot command the car. */
+          log.add('T+' + met(), 'ALARM', 'commands refused - open this page with ?k=<token>');
+          toast('commands refused: this page has no valid token');
+        }
+      })
       .catch(function () {})
       .then(function () { pending--; });
   }

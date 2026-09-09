@@ -57,6 +57,20 @@ except Exception as _gps_err:                               # noqa: BLE001
 
 HTTP_PORT = 8080
 WEB_DIR = os.path.join(HERE, "web")     # static front end, served at /web/
+
+# Optional shared secret on COMMANDS. Unset by default, so nothing changes on
+# a bench. Set it before driving anywhere with other people on the network:
+#
+#     ROBOCAR_TOKEN=somethinglong ./run_cockpit.sh
+#     open http://<host>:8080/?k=somethinglong
+#
+# It gates POST only. Telemetry stays readable, because a colleague watching
+# the numbers is harmless and being able to see what the car is doing is a
+# safety property in itself. What it stops is anyone on the LAN being able to
+# arm the motor of a vehicle they are not standing next to. This is a plain
+# shared secret over plain HTTP: it is a lock on a door, not a security
+# system, and it is worth exactly that much.
+CMD_TOKEN = os.environ.get("ROBOCAR_TOKEN", "")
 OUT = 500                       # map render size (px)
 MAP_PATH = os.path.join(ROOT, "maps", "room.npy")
 MAP_DIR = os.path.join(ROOT, "maps")
@@ -2022,6 +2036,15 @@ class H(BaseHTTPRequestHandler):
 
     def do_POST(self):
         q = parse_qs(urlparse(self.path).query)
+
+        if CMD_TOKEN and q.get("k", [""])[0] != CMD_TOKEN:
+            # Refuse before anything is read out of the query string, so a
+            # wrong token cannot set a mode, a goal, or a throttle on its way
+            # to being rejected. Logged: a command you did not send arriving
+            # from the network is something you want to know about.
+            print(f"[auth] REFUSED command from {self.client_address[0]}", flush=True)
+            self.send_error(403, "bad or missing token")
+            return
 
         if "estop" in q:
             FOLLOW["on"] = False
