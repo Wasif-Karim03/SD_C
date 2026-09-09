@@ -116,4 +116,12 @@ class H(BaseHTTPRequestHandler):
     def do_POST(self): self._s(b"{}", "application/json")
 
 if __name__ == "__main__":
-    ThreadingHTTPServer(("127.0.0.1", 8099), H).serve_forever()
+    # Say something on start. A server that binds silently is a server you
+    # stare at wondering whether it came up.
+    print("\nmock cockpit up:  http://localhost:8099")
+    print("simulated run - corridor, doorway, 30 cm box at 1.24 m, no hardware")
+    print("Ctrl-C to stop.\n", flush=True)
+    try:
+        ThreadingHTTPServer(("127.0.0.1", 8099), H).serve_forever()
+    except KeyboardInterrupt:
+        print("stopped.")
