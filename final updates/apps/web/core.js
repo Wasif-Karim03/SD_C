@@ -657,10 +657,17 @@
     try { localStorage.setItem('rc.hmi', next); } catch (e) {}
     toast(next === 'day' ? 'daylight ground' : 'night ground');
   });
-  try {
-    var saved = localStorage.getItem('rc.hmi');
-    if (saved) D.documentElement.dataset.hmi = saved;
-  } catch (e) {}
+  /* Until the operator picks a ground, follow the machine they are reading it
+     on: a laptop already set to light is probably a laptop in daylight. Once
+     they choose, that choice wins for good — an instrument must not change
+     its appearance on its own at dusk. */
+  (function () {
+    var saved = null;
+    try { saved = localStorage.getItem('rc.hmi'); } catch (e) {}
+    if (saved) { D.documentElement.dataset.hmi = saved; return; }
+    var light = W.matchMedia && W.matchMedia('(prefers-color-scheme: light)').matches;
+    D.documentElement.dataset.hmi = light ? 'day' : 'night';
+  })();
 
   /* ─────────────────────── boot ─────────────────────── */
 
