@@ -107,7 +107,25 @@ STEER_RIGHT = 115    # norm = +1.0 (full right)
 METERS_PER_TACH = 0.003424   # CALIBRATED 2026-07-23 (6.8 m -> Δtach 1986)
 MAX_DUTY = 0.20              # hard throttle ceiling for autonomy
 DEFAULT_DUTY = 0.05         # gentle bench-tested start
-WHEELBASE_M = 0.25          # TODO measure on the real chassis
+# 0.324 m is the MANUFACTURER SPEC for the Traxxas Slash 4x4 (12.75 in),
+# from traxxas.com. It replaces 0.25, which was a guess and was 30% short.
+#
+# This is a spec, not a measurement of THIS car. Wheelbase is fixed by the
+# chassis and suspension arms so it should hold unless those were changed, but
+# it has not been put under a tape yet and is still listed as unverified on
+# the DIAGNOSE screen. Verify it before it goes in a paper.
+#
+# It matters more than its size suggests: turn radius is R = WHEELBASE / tan(d),
+# so it scales every predicted path, every pure-pursuit command, and the
+# steering fit itself, linearly.
+WHEELBASE_M = 0.324         # SPEC (Traxxas) - verify with a tape
+
+# Stock curb mass from the same spec sheet. The car as it drives carries a
+# Jetson, a LiDAR, two cameras and a LiPo on top of this, so weigh it rather
+# than using this number -- mass is one of the largest sim-to-real error
+# sources and the delta here is not small.
+TRAXXAS_STOCK_MASS_KG = 2.64
+VEHICLE_MASS_KG = None      # TODO weigh the car as it actually drives
 MAX_STEER_ANGLE_RAD = 0.45  # TODO measure on the real chassis
 
 # --------------------------------------------------------------------------- #
