@@ -65,7 +65,31 @@ TICK_HZ = 50.0          # default control/log rate for the driving manoeuvres
 LAT_TICK_HZ = 200.0
 SETTLE = 0.005          # VESC reply wait; see drivers/vesc.py get_values()
 
+# A ladder is only useful ABOVE breakaway; below it every rung produces a
+# stationary car and an empty log. These are the historic defaults and are
+# almost certainly too low for a loaded 1/10 with a Jetson on it — run the
+# `breakaway` manoeuvre and pass --min-duty to build a ladder that moves.
 THROTTLE_DUTIES = [0.06, 0.07, 0.08, 0.09, 0.10, 0.12]
+
+# ── breakaway ────────────────────────────────────────────────────────────
+# The duty at which the wheels ACTUALLY start turning. config.MIN_MOVE_DUTY
+# has always been a guess, and every other manoeuvre is scaled off it, so a
+# wrong value here quietly invalidates the whole session. Measured as a slow
+# staircase: hold each rung long enough for static friction to give way, stop
+# the instant the tachometer moves.
+BRK_START = 0.020
+BRK_STEP = 0.005
+BRK_HOLD_S = 0.35
+BRK_REPEATS = 3
+BRK_MOVE_ERPM = 120.0    # |erpm| that counts as "turning", above sensor noise
+BRK_CONFIRM = 2          # consecutive ticks, so one noisy sample cannot trigger
+BRK_SETTLE_S = 2.0       # let the previous pass's wheels stop before arming
+
+# Prefixed onto every session note in --dry mode. A synthetic session sitting
+# in logs/ looking exactly like a real one is the same hazard as a mislabelled
+# run: it will be picked up by `sysid_fit --all` and fitted as if the car had
+# produced it. Make it impossible to mistake.
+DRY_TAG = ""
 THROTTLE_DRIVE_S = 1.5
 THROTTLE_COAST_S = 2.0   # coast-down after the step -> drag / rolling resistance
 
@@ -323,8 +347,9 @@ def run_segment(rig, rec, segments, label, guard=True, on_tick=None, tick_hz=Non
                          "motor_current": tel.get("motor_current"),
                          "temp_mos": tel.get("temp_mos"), "fault": tel.get("fault"),
                          "scan_seq": scan_seq})
-                if on_tick:
-                    on_tick(tel)
+                if on_tick and on_tick(tel) == "stop":
+                    rig.set_duty(0.0)
+                    return True, "ok"
                 slp = dt_nom - (time.monotonic() - now)
                 if slp > 0:
                     time.sleep(slp)
@@ -355,13 +380,102 @@ def man_latency(rig, args):
         segs.append((LAT_STEER_ON_S, 0.0, 1.0 if i % 2 == 0 else -1.0, "steerstep"))
     segs.append((0.6, 0.0, 0.0, "rest"))
 
-    rec = Recorder(note="sysid latency (wheels up)", source="sysid").start()
+    rec = Recorder(note=DRY_TAG + "sysid latency (wheels up)", source="sysid").start()
     countdown(3)
     ok, why = run_segment(rig, rec, segs, "latency", guard=False,
                           tick_hz=args.tick_hz or LAT_TICK_HZ)
     st = rec.stop()
     print(f"  {'done' if ok else 'ABORTED: ' + why}   -> {os.path.basename(st['dir'])}")
     return st["dir"]
+
+
+def man_breakaway(rig, args):
+    banner("BREAKAWAY  —  the duty at which the wheels actually turn")
+    print("  Ramps duty in small steps and stops the moment the motor turns.")
+    print("  config.MIN_MOVE_DUTY is a GUESS; every other manoeuvre is scaled")
+    print("  off it, so measuring it first is what stops a whole session of")
+    print("  runs where the car never moved.\n")
+    if args.stand:
+        print("  MODE: wheels UP — measures motor + drivetrain breakaway only.")
+    else:
+        print("  MODE: on the floor — adds the vehicle's own static friction.")
+        print("  The car will CREEP a few centimetres. A metre of space is plenty.")
+    if not confirm("Ready?", args.auto):
+        return []
+
+    dirs, found = [], []
+    rungs = []
+    d = BRK_START
+    while d <= rig.max_duty + 1e-9:
+        rungs.append(round(d, 4)); d += BRK_STEP
+
+    for rep in range(BRK_REPEATS):
+        print(f"\n  --- pass {rep + 1} of {BRK_REPEATS} ---")
+        # The leading rest must be long enough for the previous pass's wheels to
+        # actually STOP. Wheels-up they coast for seconds with nothing to slow
+        # them, and a detector that starts armed will call that coast "motion"
+        # and report breakaway at duty 0.000 — which is exactly what the dry
+        # run did before this guard existed.
+        segs = [(BRK_SETTLE_S, 0.0, 0.0, "rest")]
+        for r in rungs:
+            segs.append((BRK_HOLD_S, r, 0.0, "ramp"))
+        segs.append((0.4, 0.0, 0.0, "rest"))
+
+        state = {"hits": 0, "duty": None, "armed": False}
+
+        def watch(tel, _st=state):
+            if _st["duty"] is not None:
+                return None
+            duty = abs(tel.get("duty") or 0.0)
+            erpm = abs(tel.get("erpm") or 0.0)
+            if duty < BRK_START * 0.5:
+                # in a rest phase: arm only once the motor is genuinely stopped
+                if erpm < BRK_MOVE_ERPM:
+                    _st["armed"] = True
+                _st["hits"] = 0
+                return None
+            if not _st["armed"]:
+                # never observed at rest, so any motion now is unattributable
+                return None
+            if erpm >= BRK_MOVE_ERPM:
+                _st["hits"] += 1
+                if _st["hits"] >= BRK_CONFIRM:
+                    _st["duty"] = duty
+                    return "stop"
+            else:
+                _st["hits"] = 0
+            return None
+
+        rec = Recorder(note=DRY_TAG + f"sysid breakaway pass {rep + 1}"
+                            f"{' (wheels up)' if args.stand else ' (on floor)'}",
+                       source="sysid").start()
+        countdown(3)
+        ok, why = run_segment(rig, rec, segs, "breakaway", guard=not args.no_guard,
+                              on_tick=watch)
+        st = rec.stop()
+        dirs.append(st["dir"])
+        if state["duty"] is not None and state["duty"] >= BRK_START:
+            found.append(abs(state["duty"]))
+            print(f"  moved at duty {abs(state['duty']):.3f}"
+                  f"   -> {os.path.basename(st['dir'])}")
+        else:
+            print(f"  NO MOTION up to {rig.max_duty:.3f} — raise --max-duty"
+                  f"   -> {os.path.basename(st['dir'])}")
+        if not ok and "GUARD" not in why:
+            print(f"  ({why})")
+            break
+
+    if found:
+        found.sort()
+        med = found[len(found) // 2]
+        print("\n" + "=" * 68)
+        print(f"  BREAKAWAY: {med:.3f} duty   (passes: "
+              f"{', '.join(f'{v:.3f}' for v in found)})")
+        print(f"  config.py currently says MIN_MOVE_DUTY = {config.MIN_MOVE_DUTY:.3f}"
+              f"  -> {'OK' if abs(med - config.MIN_MOVE_DUTY) < 0.015 else 'WRONG, update it'}")
+        print(f"  next:  python3 sysid.py throttle --min-duty {med + 0.01:.3f}")
+        print("=" * 68)
+    return dirs
 
 
 def man_throttle(rig, args):
@@ -371,8 +485,15 @@ def man_throttle(rig, args):
     print(f"  REQUIREMENT: a clear straight run. At {max(THROTTLE_DUTIES):.2f} duty for "
           f"{THROTTLE_DRIVE_S:.1f}s plus coast, allow ~5 m.")
     print("  Keep a hand ready. Ctrl-C stops everything immediately.")
+    duties = THROTTLE_DUTIES
+    if args.min_duty:
+        # six rungs from just above breakaway to the cap. A ladder that starts
+        # below the duty the car can actually move at is six empty logs.
+        lo, hi = args.min_duty, rig.max_duty
+        duties = [round(lo + (hi - lo) * i / 5.0, 3) for i in range(6)] if hi > lo else [lo]
+        print(f"  ladder from --min-duty: {', '.join(f'{d:.3f}' for d in duties)}")
     dirs = []
-    for duty in THROTTLE_DUTIES:
+    for duty in duties:
         print(f"\n  --- duty {duty:.2f} ---")
         if not confirm(f"Car at the start, path clear? (duty {duty:.2f})", args.auto):
             print("  skipped.")
@@ -380,7 +501,7 @@ def man_throttle(rig, args):
         segs = [(0.4, 0.0, 0.0, "rest"),
                 (THROTTLE_DRIVE_S, duty, 0.0, "step"),
                 (THROTTLE_COAST_S, 0.0, 0.0, "coast")]
-        rec = Recorder(note=f"sysid throttle duty={duty:.3f}", source="sysid").start()
+        rec = Recorder(note=DRY_TAG + f"sysid throttle duty={duty:.3f}", source="sysid").start()
         countdown(3)
         ok, why = run_segment(rig, rec, segs, f"throttle_{duty:.3f}",
                               guard=not args.no_guard)
@@ -413,7 +534,7 @@ def man_steering(rig, args):
                 (STEER_DRIVE_S, STEER_DUTY, s, "arc"),
                 (1.2, 0.0, s, "coast"),
                 (0.3, 0.0, 0.0, "center")]
-        rec = Recorder(note=f"sysid steering steer={s:+.3f}", source="sysid").start()
+        rec = Recorder(note=DRY_TAG + f"sysid steering steer={s:+.3f}", source="sysid").start()
         countdown(3)
         ok, why = run_segment(rig, rec, segs, f"steering_{s:+.3f}",
                               guard=not args.no_guard)
@@ -429,7 +550,11 @@ def main(argv=None):
         description="System identification runs for the car.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Then:  python3 recording/sysid_fit.py --all")
-    ap.add_argument("maneuver", choices=["latency", "throttle", "steering", "all"])
+    ap.add_argument("maneuver",
+                    choices=["latency", "breakaway", "throttle", "steering", "all"])
+    ap.add_argument("--min-duty", type=float, default=None,
+                    help="lowest duty the car actually moves at, from the "
+                         "breakaway manoeuvre; builds the throttle ladder from it")
     ap.add_argument("--max-duty", type=float, default=0.12,
                     help="hard cap on commanded duty (default 0.12)")
     ap.add_argument("--guard-m", type=float, default=1.2,
@@ -462,6 +587,9 @@ def main(argv=None):
           f"(-> {1000.0 / (args.tick_hz or LAT_TICK_HZ):.0f} ms resolution)")
     print("\n  opening hardware ...")
 
+    global DRY_TAG
+    if args.dry:
+        DRY_TAG = "[DRY RUN - SYNTHETIC, NOT THIS CAR] "
     rig = Rig(args.max_duty, args.guard_m, dry=args.dry,
               use_lidar=not args.dry)
     dirs = []
@@ -471,6 +599,8 @@ def main(argv=None):
             d = man_latency(rig, args)
             if d:
                 dirs.append(d)
+        if args.maneuver in ("breakaway", "all"):
+            dirs += man_breakaway(rig, args) or []
         if args.maneuver in ("throttle", "all"):
             dirs += man_throttle(rig, args)
         if args.maneuver in ("steering", "all"):
