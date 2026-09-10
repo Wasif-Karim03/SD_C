@@ -123,7 +123,18 @@ FREESPACE_SLOW_REACH = 3.5  # full speed only when it sees this far; scale down 
 
 # Sensorless BLDC won't reliably start from a standstill below ~5-6% duty (it just
 # cogs). When we intend to move, floor the command here so it actually rolls.
-MIN_MOVE_DUTY = 0.06
+# MEASURED 2026-09-09 with apps/probe_duty.py, car loaded on the floor: the
+# motor turns from 0.02 upward (ERPM climbs smoothly, tachometer walks), but
+# the VEHICLE does not translate until 0.14. The old 0.06 was a guess and it
+# was wrong by more than 2x.
+#
+# Consequence worth remembering: the VESC tachometer counts MOTOR commutation,
+# not wheel rotation. Below 0.14 it accumulates counts while the car is
+# stationary, so tach-derived distance over-reads during any period the
+# drivetrain is not transmitting. METERS_PER_TACH was calibrated by rolling
+# 6.8 m at steady speed, where it is presumably fine; do not trust it through
+# a standing start.
+MIN_MOVE_DUTY = 0.14
 
 # --------------------------------------------------------------------------- #
 # LiDAR-based navigation (metric, 360°). LiDAR is the geometry/path sensor.

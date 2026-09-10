@@ -89,8 +89,18 @@ SCAN_MAX_AGE_S = 0.6            # auto-drive refuses to move on a scan older tha
 REPLAN_EVERY_S = 1.0
 REACT_M = 1.3
 BLOCK_GIVEUP_S = 6.0
-DUTY_INDOOR = 0.07
-DUTY_OUTDOOR = 0.09
+# Derived from the MEASURED breakaway rather than picked. Both of these used
+# to be 0.07 and 0.09 -- below config.MIN_MOVE_DUTY as measured on 2026-09-09
+# (0.14), which means autonomous follow has never been able to move this car.
+# Hitting GO commanded a duty the vehicle cannot translate at, and the car sat
+# there while the planner, the localizer and the pure-pursuit loop all worked
+# perfectly.
+#
+# Note how little room there is: breakaway 0.14, MAX_DUTY 0.20. The entire
+# speed-control authority of this vehicle is 0.06 of duty. That is a real
+# constraint on what any controller here can do, learned or otherwise.
+DUTY_INDOOR = round(config.MIN_MOVE_DUTY + 0.015, 3)
+DUTY_OUTDOOR = round(config.MIN_MOVE_DUTY + 0.035, 3)
 
 STATE = {}
 S_LOCK = threading.Lock()
