@@ -105,7 +105,11 @@ THROTTLE_DRIVE_S = 1.5
 THROTTLE_COAST_S = 2.0   # coast-down after the step -> drag / rolling resistance
 
 STEER_VALUES = [-1.0, -0.6, -0.3, 0.3, 0.6, 1.0]
-STEER_DUTY = 0.08
+# The steering arcs are useless if the car does not actually drive them, and
+# 0.08 is below this vehicle's measured breakaway (0.14). --min-duty only ever
+# rebuilt the THROTTLE ladder, so a steering run launched with --min-duty 0.145
+# still crept at 0.08 and recorded six arcs of a stationary car. Derive it.
+STEER_DUTY = round(config.MIN_MOVE_DUTY + 0.02, 3)
 STEER_SETTLE_S = 0.8     # let the servo reach the angle BEFORE moving
 STEER_DRIVE_S = 4.0
 
@@ -539,6 +543,14 @@ def man_steering(rig, args):
         print("\n  !! No LiDAR. Yaw rate cannot be measured automatically.")
         print("     Fallback: run it anyway, then tape-measure the circle the car")
         print("     drove and pass --radius-m to sysid_fit.py.")
+    # The arcs are worthless unless the car actually drives them.
+    steer_duty = round(args.min_duty + 0.02, 3) if args.min_duty else STEER_DUTY
+    steer_duty = min(steer_duty, rig.max_duty)
+    print(f"\n  drive duty for the arcs: {steer_duty:.3f}"
+          f"   (measured breakaway {config.MIN_MOVE_DUTY:.3f})")
+    if steer_duty <= config.MIN_MOVE_DUTY:
+        print("  !! That is AT OR BELOW breakaway -- the car will not move and the")
+        print("     arcs will record nothing. Raise --max-duty, or --min-duty.")
     dirs = []
     for s in STEER_VALUES:
         print(f"\n  --- steer {s:+.2f} ---")
@@ -547,7 +559,7 @@ def man_steering(rig, args):
             continue
         segs = [(0.3, 0.0, 0.0, "rest"),
                 (STEER_SETTLE_S, 0.0, s, "settle"),
-                (STEER_DRIVE_S, STEER_DUTY, s, "arc"),
+                (STEER_DRIVE_S, steer_duty, s, "arc"),
                 (1.2, 0.0, s, "coast"),
                 (0.3, 0.0, 0.0, "center")]
         rec = Recorder(note=DRY_TAG + f"sysid steering steer={s:+.3f}", source="sysid").start()
