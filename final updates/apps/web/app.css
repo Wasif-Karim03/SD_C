@@ -384,6 +384,12 @@ a{color:var(--ref)} a:hover{color:var(--ref-bright)}
 
 .camwrap{position:relative;overflow:hidden;line-height:0}
 .camwrap img{width:100%;height:100%;object-fit:cover;display:block}
+/* Deliberately unused. The rear camera IS mounted upside down, but
+   drivers/camera.py already rotates its frames by config.CAM_REAR_ROTATE
+   before they ever leave the Jetson — "every consumer" gets them upright.
+   Applying this class as well rotated them a second time and put the rear
+   view back on its head. Kept only so the next person finds this note
+   instead of rediscovering it. */
 .camwrap.flip img{transform:rotate(180deg)}
 .camwrap .cap{position:absolute;left:7px;bottom:5px;font-size:8.5px;color:var(--t2);
   font-family:"IBM Plex Mono",monospace;line-height:11px}

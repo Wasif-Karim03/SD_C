@@ -102,6 +102,46 @@ FOLLOW = {"on": False, "arrived": False, "note": ""}
 
 BLANK = None                    # placeholder jpeg
 
+# Pack chemistry. The alarm limits are PER CELL — 3.5 V/cell is "land now",
+# 3.3 V is where you start damaging a LiPo — so the pack limits depend on the
+# cell count, which the cockpit had hardcoded for a 4S. On a 3S that turned a
+# perfectly healthy 11.7 V into a screaming alarm.
+#
+# The count is inferred from the first sane reading rather than configured,
+# because a wrong constant here is worse than no constant: it either cries
+# wolf or stays silent while the pack is being ruined. Set BATTERY_CELLS in
+# config.py to override.
+V_CELL_ALARM = 3.30
+V_CELL_WARN = 3.50
+V_CELL_FULL = 4.25
+BATT = {"cells": getattr(config, "BATTERY_CELLS", None), "inferred": False}
+
+
+def _infer_cells(v_in):
+    """Pick the cell count that puts this pack in a physically sane window.
+
+    A 2S..8S pack at 3.2-4.25 V/cell is unambiguous for most voltages; where
+    two counts both fit we take the higher (a nearly-flat 4S is a real state
+    worth alarming about, a 6S at 4.4 V/cell is not a real state at all).
+    """
+    if BATT["cells"]:
+        return BATT["cells"]
+    if not v_in or v_in < 5.0:
+        return None
+    best = None
+    for n in range(2, 9):
+        per = v_in / n
+        if 3.20 <= per <= V_CELL_FULL:
+            best = n
+    if best:
+        BATT["cells"] = best
+        BATT["inferred"] = True
+        print(f"[batt] pack looks like {best}S "
+              f"({v_in:.1f} V = {v_in / best:.2f} V/cell). "
+              f"warn {best * V_CELL_WARN:.1f} V, alarm {best * V_CELL_ALARM:.1f} V. "
+              f"Set BATTERY_CELLS in config.py to pin it.", flush=True)
+    return best
+
 
 def _session_info():
     """Which code is flying. A screenshot of a run is worth very little if you
@@ -202,6 +242,7 @@ class Hub:
         self.rec = None
         self.rec_lock = threading.Lock()
         self._scan_arrival = 0.0     # arrival time of the newest scan we logged
+        self.scan_hz = None          # MEASURED revolution rate (not 1/scan_age)
         self._rec_scan_seq = None    # links each telemetry row to a revolution
 
         # frame buffers (jpeg bytes)
@@ -410,6 +451,16 @@ class Hub:
                 # revolutions — identified by their arrival time, not poll time.
                 arrival = now - age
                 is_new = arrival > self._scan_arrival + 1e-6
+                # Measure the ACTUAL revolution rate from the interval between
+                # new scans. The cockpit used to derive Hz as 1/scan_age, which
+                # is not the scan rate at all — it is how fresh the newest scan
+                # happens to be at the moment you look, so a fast poll made a
+                # 10 Hz scanner read 25 Hz.
+                if is_new and self._scan_arrival:
+                    dt = arrival - self._scan_arrival
+                    if 0.005 < dt < 2.0:
+                        self.scan_hz = (dt and 1.0 / dt) if self.scan_hz is None \
+                            else 0.8 * self.scan_hz + 0.2 / dt
                 self._scan_arrival = arrival
                 self.last_scan = scan
                 self.last_scan_t = now
@@ -912,6 +963,16 @@ class Hub:
                                      "steer": round(CTRL["steer"], 3)}
                 STATE["gps"] = self.gps.snapshot() if self.gps else {
                     "fix": False, "present": False, "satlist": []}
+                cells = _infer_cells(tele.get("v_in")) if tele else BATT["cells"]
+                STATE["batt"] = ({"cells": cells, "inferred": BATT["inferred"],
+                                  "warn": round(cells * V_CELL_WARN, 2),
+                                  "alarm": round(cells * V_CELL_ALARM, 2),
+                                  "full": round(cells * V_CELL_FULL, 2),
+                                  "v_cell": (round(tele["v_in"] / cells, 2)
+                                             if tele.get("v_in") else None)}
+                                 if cells else {"cells": None})
+                STATE["scan_hz"] = (round(self.scan_hz, 1)
+                                    if self.scan_hz else None)
                 STATE["session"] = self.session
                 STATE["config"] = CONFIG_SNAPSHOT
                 STATE.update(self._local_frame(STATE.get("pose")))

@@ -117,10 +117,19 @@
                    limit: function (v) { return v < 0.7 ? 'alarm' : (v < 1.3 ? 'caution' : ''); } });
   addMAI('duty', { label: 'DUTY (COMMANDED)', unit: '%', dp: 1, min: -20, max: 20,
                    band: [35, 65], ticks: [15, 85] });
-  addMAI('batt', { label: 'BATTERY', unit: 'V', dp: 2, min: 12.0, max: 17.0,
+  /* Limits are PER CELL and the pack's cell count is measured, not assumed.
+     Hardcoding a 4S turned a healthy 3S at 11.7 V into a standing alarm.
+     The server infers the count and publishes the thresholds; until it has,
+     the MAI simply shows the voltage with no limit colour rather than
+     guessing — an alarm you cannot trust is worse than no alarm. */
+  var BATT = { alarm: null, warn: null, cells: null };
+  var battOpts = { label: 'BATTERY', unit: 'V', dp: 2, min: 9.0, max: 17.0,
                    band: [40, 100], ticks: [14, 26],
-                   /* 4S LiPo: 3.5 V/cell is the "land now" line, 3.3 is damage */
-                   limit: function (v) { return v < 13.2 ? 'alarm' : (v < 14.0 ? 'caution' : ''); } });
+                   limit: function (v) {
+                     if (!BATT.alarm) return '';
+                     return v < BATT.alarm ? 'alarm' : (v < BATT.warn ? 'caution' : '');
+                   } };
+  addMAI('batt', battOpts);
   addMAI('mos',  { label: 'VESC MOSFET', unit: '°C', dp: 1, min: 20, max: 90,
                    band: [0, 71], ticks: [71],
                    limit: function (v) { return v > 80 ? 'alarm' : (v > 70 ? 'caution' : ''); } });
@@ -236,8 +245,11 @@
     if (S.scan_age != null && S.scan_age > 0.6)
       out.push(['ALARM', 'LiDAR scan ' + S.scan_age.toFixed(1) + ' s old — auto-drive refuses to move']);
     else if (!h.lidar) out.push(['ALARM', 'no LiDAR — obstacle stopping is not running']);
-    if (t.v_in != null && t.v_in < 13.2) out.push(['ALARM', 'pack ' + t.v_in.toFixed(1) + ' V — stop now']);
-    else if (t.v_in != null && t.v_in < 14.0) out.push(['CAUTION', 'pack ' + t.v_in.toFixed(1) + ' V — one run left at most']);
+    if (t.v_in != null && BATT.alarm) {
+      var pc = BATT.cells ? ' (' + (t.v_in / BATT.cells).toFixed(2) + ' V/cell)' : '';
+      if (t.v_in < BATT.alarm) out.push(['ALARM', 'pack ' + t.v_in.toFixed(1) + ' V' + pc + ' — stop now']);
+      else if (t.v_in < BATT.warn) out.push(['CAUTION', 'pack ' + t.v_in.toFixed(1) + ' V' + pc + ' — one run left at most']);
+    }
     if (t.temp_mos != null && t.temp_mos > 70) out.push(['CAUTION', 'VESC MOSFET ' + t.temp_mos.toFixed(0) + ' °C']);
     if (!h.cam) out.push(['CAUTION', 'front camera not opened']);
     if (S.rear_on === false && S.mode === 'perception')
@@ -335,7 +347,14 @@
 
   /* ─────────────────────── the frame ─────────────────────── */
 
-  var lastMode = null, lastArmed = null, lastEstop = null, lastRec = null;
+  /* Transition tracking. `seeded` exists because the first frame() runs before
+     the first /state has arrived, so every "last" value starts as undefined —
+     and `undefined !== null` is TRUE. The old guard therefore passed on frame
+     two and called undefined.toUpperCase(), throwing every 100 ms and killing
+     the entire second half of frame() with it. Guard on having real data, not
+     on a sentinel that JavaScript will happily walk past. */
+  var seeded = false;
+  var lastMode, lastArmed, lastEstop, lastRec, lastRear;
 
   function frame() {
     var stale = !live();
@@ -363,18 +382,32 @@
     $('slide-label').textContent = d.estop ? 'SLIDE TO CLEAR' : 'SLIDE TO STOP';
 
     /* chips */
-    chips['LIDAR'].set(h.lidar ? (S.scan_age != null ? (1 / Math.max(S.scan_age, .01)).toFixed(1) : 'OK') : 'DOWN',
-                       h.lidar ? 'Hz' : '', h.lidar ? '' : 'alarm');
+    /* the MEASURED revolution rate. This used to show 1/scan_age, which is how
+       fresh the newest scan is, not how fast the scanner turns — it made a
+       10 Hz C1 read 25 Hz. */
+    chips['LIDAR'].set(h.lidar ? (S.scan_hz != null ? S.scan_hz.toFixed(1) : 'OK') : 'DOWN',
+                       h.lidar && S.scan_hz != null ? 'Hz' : '', h.lidar ? '' : 'alarm');
     chips['CAM-F'].set(h.cam ? 'LIVE' : 'OFF', '', h.cam ? '' : 'caution');
     chips['CAM-R'].set(S.rear_on ? 'LIVE' : 'OFF', '', S.rear_on ? '' : 'caution');
     chips['VESC'].set(t.v_in != null ? t.v_in.toFixed(1) : '—', 'V',
-                      t.v_in == null ? 'caution' : (t.v_in < 13.2 ? 'alarm' : (t.v_in < 14.0 ? 'caution' : '')));
+                      t.v_in == null ? 'caution'
+                      : (!BATT.alarm ? ''
+                         : (t.v_in < BATT.alarm ? 'alarm' : (t.v_in < BATT.warn ? 'caution' : ''))));
     chips['STEER'].set(h.steer ? 'OK' : 'DOWN', '', h.steer ? '' : 'caution');
     chips['LOC'].set(S.mode === 'navigate' ? (h.loc ? 'OK' : 'LOST') : 'N/A', '',
                      S.mode === 'navigate' && !h.loc ? 'caution' : '');
     var rec = S.rec || {};
     chips['REC'].set(rec.on ? (rec.rows != null ? rec.rows : 'ON') : 'OFF',
                      rec.on && rec.rows != null ? 'rows' : '', rec.on ? 'go' : '');
+
+    if (S.batt && S.batt.cells && S.batt.cells !== BATT.cells) {
+      BATT.cells = S.batt.cells; BATT.alarm = S.batt.alarm; BATT.warn = S.batt.warn;
+      /* rescale the gauge so the pointer spans the pack's real usable range */
+      battOpts.min = +(S.batt.cells * 3.0).toFixed(2);
+      battOpts.max = +(S.batt.full).toFixed(2);
+      battOpts.label = 'BATTERY · ' + S.batt.cells + 'S';
+      mais.batt.node.querySelector('.lbl').textContent = battOpts.label;
+    }
 
     /* MAIs */
     mais.hdg.set(fol.heading_err);
@@ -487,15 +520,23 @@
     drawStrip();
 
     /* transitions worth a log line */
-    if (S.mode !== lastMode && lastMode !== null)
-      log.add('T+' + met(), 'MODE', lastMode.toUpperCase() + ' → ' + String(S.mode).toUpperCase() + ' (operator)');
-    if (d.armed !== lastArmed && lastArmed !== null)
-      log.add('T+' + met(), 'PREARM', d.armed ? 'armed' : 'disarmed');
-    if (d.estop !== lastEstop && lastEstop !== null)
-      log.add('T+' + met(), 'ESTOP', d.estop ? 'LATCHED' : 'cleared by operator (still disarmed)');
-    if (rec.on !== lastRec && lastRec !== null)
-      log.add('T+' + met(), 'REC', rec.on ? ('recording started' + (rec.note ? ' · “' + rec.note + '”' : '')) : 'recording stopped');
+    if (seeded) {
+      if (S.mode !== lastMode)
+        log.add('T+' + met(), 'MODE', String(lastMode).toUpperCase() + ' → ' +
+                String(S.mode).toUpperCase() + ' (operator)');
+      if (d.armed !== lastArmed)
+        log.add('T+' + met(), 'PREARM', d.armed ? 'armed' : 'disarmed');
+      if (d.estop !== lastEstop)
+        log.add('T+' + met(), 'ESTOP', d.estop ? 'LATCHED' : 'cleared by operator (still disarmed)');
+      if (rec.on !== lastRec)
+        log.add('T+' + met(), 'REC', rec.on ? ('recording started' + (rec.note ? ' · “' + rec.note + '”' : '')) : 'recording stopped');
+    }
+    /* The camera streams are chosen in show(), which only runs on a screen
+       change — so a rear camera switched on AFTER load never got subscribed.
+       Re-subscribe the moment the flag actually flips. */
+    if (S.rear_on !== lastRear) { lastRear = S.rear_on; cams(); }
     lastMode = S.mode; lastArmed = d.armed; lastEstop = d.estop; lastRec = rec.on;
+    if (S.mode !== undefined) seeded = true;
 
     $('f-session').textContent = 'SESSION ' + ((S.session && S.session.started) || '—') +
                                  ' · ' + ((S.session && S.session.sha) || '—') +
@@ -538,23 +579,26 @@
     D.querySelectorAll('#rail button[data-screen]').forEach(function (b) {
       b.setAttribute('aria-current', b.dataset.screen === name ? 'true' : 'false');
     });
-    /* MJPEG sockets follow the visible screen, and only when cameras are on
-       at all. Each stream is a connection held open for as long as the panel
-       is visible — cheap on a LAN, and the single most expensive thing you
-       can push through a tunnel, which is why ?nocam=1 exists. */
-    var cf = (!NOCAM && name === 'drive')  ? '/cam/front.mjpg' : '';
-    var cr = (!NOCAM && name === 'drive'  && S.rear_on) ? '/cam/rear.mjpg' : '';
-    var vf = (!NOCAM && name === 'vision') ? '/cam/front.mjpg' : '';
-    var vr = (!NOCAM && name === 'vision' && S.rear_on) ? '/cam/rear.mjpg' : '';
-    $('img-front').src = cf; $('img-rear').src = cr;
-    $('img-front2').src = vf; $('img-rear2').src = vr;
-    $('slamimg').src    = name === 'position' ? '/map.jpg?t=' + Date.now() : '';
+    cams();
+    $('slamimg').src = name === 'position' ? '/map.jpg?t=' + Date.now() : '';
     resize();
     try { localStorage.setItem('rc.screen', name); } catch (e) {}
   }
   D.querySelectorAll('#rail button[data-screen]').forEach(function (b) {
     b.addEventListener('click', function () { show(b.dataset.screen); });
   });
+
+  /* MJPEG sockets follow the visible screen, and only when cameras are on at
+     all. Each stream is a connection held open for as long as the panel is
+     visible — cheap on a LAN, and the single most expensive thing you can push
+     through a tunnel, which is why ?nocam=1 exists. */
+  function cams() {
+    var d = (!NOCAM && cur === 'drive'), v = (!NOCAM && cur === 'vision');
+    $('img-front').src  = d ? '/cam/front.mjpg' : '';
+    $('img-rear').src   = (d && S.rear_on) ? '/cam/rear.mjpg' : '';
+    $('img-front2').src = v ? '/cam/front.mjpg' : '';
+    $('img-rear2').src  = (v && S.rear_on) ? '/cam/rear.mjpg' : '';
+  }
 
   function resize() { radar.fit(); vision.fit(); position.fit(); fitDets(); }
   W.addEventListener('resize', resize);
