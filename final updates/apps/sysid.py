@@ -56,7 +56,13 @@ import config                                                    # noqa: E402
 from recording.recorder import Recorder                          # noqa: E402
 
 # ----------------------------------------------------------------- defaults --
-TICK_HZ = 50.0
+TICK_HZ = 50.0          # default control/log rate for the driving manoeuvres
+# The latency manoeuvre is the one measurement whose resolution IS the sample
+# period: at 50 Hz the answer comes out quantised to 20 ms, which happens to be
+# the same size as the delay we are trying to measure. You cannot resolve a
+# thing by sampling it at its own scale. Wheels are up and nothing is moving,
+# so there is no reason not to sample fast here.
+LAT_TICK_HZ = 200.0
 SETTLE = 0.005          # VESC reply wait; see drivers/vesc.py get_values()
 
 THROTTLE_DUTIES = [0.06, 0.07, 0.08, 0.09, 0.10, 0.12]
@@ -269,12 +275,12 @@ class Rig:
 
 
 # ------------------------------------------------------------------- runner --
-def run_segment(rig, rec, segments, label, guard=True, on_tick=None):
-    """Execute a list of (duration_s, duty, steer, phase) at TICK_HZ, logging.
+def run_segment(rig, rec, segments, label, guard=True, on_tick=None, tick_hz=None):
+    """Execute a list of (duration_s, duty, steer, phase) at tick_hz, logging.
 
     Returns (completed, reason). Fails safe: duty 0 on every exit path.
     """
-    dt_nom = 1.0 / TICK_HZ
+    dt_nom = 1.0 / (tick_hz or TICK_HZ)
     total = sum(s[0] for s in segments)
     deadline = time.monotonic() + total + 2.0
     last_steer = None
@@ -351,7 +357,8 @@ def man_latency(rig, args):
 
     rec = Recorder(note="sysid latency (wheels up)", source="sysid").start()
     countdown(3)
-    ok, why = run_segment(rig, rec, segs, "latency", guard=False)
+    ok, why = run_segment(rig, rec, segs, "latency", guard=False,
+                          tick_hz=args.tick_hz or LAT_TICK_HZ)
     st = rec.stop()
     print(f"  {'done' if ok else 'ABORTED: ' + why}   -> {os.path.basename(st['dir'])}")
     return st["dir"]
@@ -433,6 +440,9 @@ def main(argv=None):
                     help="wheels-up: skips the floor-space warnings")
     ap.add_argument("--auto", action="store_true",
                     help="do not prompt between runs (only with --dry or on a stand)")
+    ap.add_argument("--tick-hz", type=float, default=None,
+                    help="override the sample/control rate (latency defaults to "
+                         f"{LAT_TICK_HZ:.0f} Hz, driving runs to {TICK_HZ:.0f} Hz)")
     ap.add_argument("--dry", action="store_true",
                     help="no hardware; simulate a plausible car to exercise the pipeline")
     args = ap.parse_args(argv)
@@ -447,6 +457,9 @@ def main(argv=None):
           f"   (config.MAX_DUTY = {config.MAX_DUTY})")
     print(f"  guard    : {'OFF' if args.no_guard else f'{args.guard_m:.2f} m ahead'}")
     print(f"  mode     : {'DRY (no hardware)' if args.dry else 'LIVE'}")
+    print(f"  sampling : {args.tick_hz or TICK_HZ:.0f} Hz driving, "
+          f"{args.tick_hz or LAT_TICK_HZ:.0f} Hz latency "
+          f"(-> {1000.0 / (args.tick_hz or LAT_TICK_HZ):.0f} ms resolution)")
     print("\n  opening hardware ...")
 
     rig = Rig(args.max_duty, args.guard_m, dry=args.dry,
