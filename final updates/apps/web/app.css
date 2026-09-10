@@ -472,3 +472,20 @@ a{color:var(--ref)} a:hover{color:var(--ref-bright)}
   #side{display:none}
   #tapes{width:88px}
 }
+
+/* ─────────────────────── mode selector ─────────────────────── */
+/* The mode decides which pipelines are resident, so it is a real commitment
+   of the 8 GB budget, not a view toggle. It lives in the header beside the
+   state, not on the screen rail, because which SCREEN you are looking at and
+   which MODE the car is in are different questions and conflating them is how
+   an operator ends up loading a detector by clicking a camera view. */
+#modes{display:flex;gap:2px}
+#modes button{
+  height:19px;padding:0 7px;border:1px solid var(--hair-3);background:transparent;
+  cursor:pointer;font-family:inherit;font-size:9px;font-weight:600;
+  letter-spacing:.09em;color:var(--t3);text-transform:uppercase;
+}
+#modes button:hover{color:var(--t1);border-color:var(--t3)}
+#modes button[aria-current="true"]{background:var(--fill-go);color:var(--t1);
+  border-color:transparent}
+#modes button.pending{opacity:.5;cursor:progress}

@@ -194,6 +194,32 @@
 
   /* ─────────────────────────── renderers ─────────────────────────── */
 
+  /* MODE is not the same thing as SCREEN. The screen is what you are looking
+     at; the mode is what the car has loaded and is willing to do, and it costs
+     real memory on an 8 GB board. GAP is the one that needs nothing but a
+     turning LiDAR -- no map, no localizer, no goal. */
+  var MODES = [
+    ['drive', 'manual driving; nothing autonomous is running'],
+    ['gap', 'Follow-the-Gap: reactive autonomy, needs only the LiDAR'],
+    ['map', 'drive slowly while SLAM builds a map'],
+    ['navigate', 'load the saved map, click a goal, follow the route'],
+    ['perception', 'YOLO on the cameras (loads the detector into RAM)']
+  ];
+  var modeBtns = {};
+  MODES.forEach(function (m) {
+    var b = UI.el('button', null, m[0].toUpperCase());
+    b.title = m[1];
+    b.addEventListener('click', function () {
+      if (S.mode === m[0]) return;
+      b.classList.add('pending');
+      post('mode=' + m[0]).then(function () {
+        setTimeout(function () { b.classList.remove('pending'); }, 1200);
+      });
+    });
+    modeBtns[m[0]] = b;
+    $('modes').appendChild(b);
+  });
+
   var radar    = W.Radar($('radar'));
   var vision   = W.Vision($('vision'));
   var position = W.Position($('mapfall'), $('leaflet'), $('srclist'));
@@ -381,6 +407,10 @@
     $('estop').firstChild.nodeValue = d.estop ? '■ LATCHED' : '■ STOP';
     $('slide-label').textContent = d.estop ? 'SLIDE TO CLEAR' : 'SLIDE TO STOP';
 
+    Object.keys(modeBtns).forEach(function (k) {
+      modeBtns[k].setAttribute('aria-current', S.mode === k ? 'true' : 'false');
+    });
+
     /* chips */
     /* the MEASURED revolution rate. This used to show 1/scan_age, which is how
        fresh the newest scan is, not how fast the scanner turns — it made a
@@ -430,8 +460,9 @@
     tapeSteer.set(null, S.ctrl ? S.ctrl.steer : null);
 
     /* guidance line */
+    var law = S.mode === 'gap' ? 'FollowTheGap' : 'FollowPath';
     $('g-line').innerHTML = fol.on
-      ? 'AUTO <span class="sep">▸</span> FollowPath <span class="sep">▸</span> ' +
+      ? 'AUTO <span class="sep">▸</span> ' + law + ' <span class="sep">▸</span> ' +
         '<span style="color:var(--caution)">' + (fol.note || 'running') + '</span>'
       : 'MANUAL <span class="sep">▸</span> operator' +
         (d.armed ? '' : ' <span class="sep">▸</span> <span style="color:var(--t3)">disarmed</span>');

@@ -44,6 +44,7 @@ from drivers.camera import Camera                          # noqa: E402
 from perception.slam import LidarSLAM, RES, SIZE, ORIGIN   # noqa: E402
 from perception import planner as P                        # noqa: E402
 from perception.lidar_nav import LidarNavigator           # noqa: E402
+from control.follow_the_gap import FollowTheGap          # noqa: E402
 try:
     from recording.recorder import Recorder                 # noqa: E402
 except Exception as _rec_err:                               # noqa: BLE001
@@ -300,7 +301,7 @@ class Hub:
         self.running = True
         for fn in (self._lidar_loop, self._front_loop, self._rear_loop,
                    self._map_loop, self._actuator_loop, self._follow_loop,
-                   self._telemetry_loop):
+                   self._gap_loop, self._telemetry_loop):
             threading.Thread(target=self._guard(fn), daemon=True).start()
         print(f"\nMISSION CONTROL up:  http://localhost:{HTTP_PORT}  "
               f"(or http://<jetson-ip>:{HTTP_PORT})\nCtrl-C to stop.")
@@ -354,7 +355,8 @@ class Hub:
     #  mode switching (this is what keeps memory in budget)
     # ------------------------------------------------------------------ #
     def set_mode(self, mode):
-        if mode not in ("drive", "map", "navigate", "perception") or mode == self.mode:
+        if mode not in ("drive", "map", "navigate", "perception", "gap") \
+                or mode == self.mode:
             return
         prev = self.mode
         # ---- tear down the mode we're leaving ----
@@ -908,6 +910,107 @@ class Hub:
     # ------------------------------------------------------------------ #
     #  telemetry
     # ------------------------------------------------------------------ #
+    def _gap_loop(self):
+        """Reactive autonomy: Follow-the-Gap steers, the LiDAR navigator vetoes.
+
+        This is the simplest autonomy this car can do, and deliberately so. It
+        needs no map, no localizer, no goal and no training -- only a LiDAR
+        that is turning. NAVIGATE needs all four and has never once moved the
+        vehicle; this needs none of them.
+
+        The division of labour is on purpose. Follow-the-Gap chooses WHERE to
+        point, because that is what it is good at. Whether it is safe to move
+        at all is left to LidarNavigator, which is the code that has been
+        guarding every other mode -- so the stopping behaviour here is the
+        same stopping behaviour that has already been trusted elsewhere,
+        rather than a second opinion written fresh.
+        """
+        ftg = FollowTheGap()
+        blocked_since = None
+        while self.running:
+            time.sleep(0.05)
+            if self.mode != "gap" or not FOLLOW["on"]:
+                blocked_since = None
+                continue
+            with C_LOCK:
+                if CTRL["estop"]:
+                    FOLLOW["on"] = False
+                    FOLLOW["note"] = "E-STOP"
+                    continue
+
+            # Same two gates as the pure-pursuit follower, and for the same
+            # reason: a scan that stopped arriving still reads "clear".
+            scan = self.last_scan
+            age = time.monotonic() - self.last_scan_t
+            if scan is None or age > SCAN_MAX_AGE_S:
+                self._drive(0.0, 0.0)
+                FOLLOW["note"] = f"stopped: no LiDAR ({age:.1f}s stale)"
+                continue
+
+            try:
+                nav = self.nav.plan(scan)
+            except Exception:                                # noqa: BLE001
+                self._drive(0.0, 0.0)
+                FOLLOW["note"] = "stopped: navigator error"
+                continue
+
+            out = ftg.plan(self._scan_grid(scan))
+            with S_LOCK:
+                STATE["gap"] = {"steer": out["steer"], "target_deg": out["target_deg"],
+                                "gap_deg": round(out["gap_deg"], 1),
+                                "depth_m": round(out["gap_depth_m"], 2),
+                                "note": out["note"]}
+
+            if out["steer"] is None:
+                self._drive(0.0, 0.0)
+                FOLLOW["note"] = "no gap: " + (out["note"] or "nowhere to go")
+                continue
+
+            steer = max(-1.0, min(1.0, config.STEER_SIGN * out["steer"]))
+            if nav["blocked"]:
+                self._drive(0.0, steer)
+                blocked_since = blocked_since or time.monotonic()
+                FOLLOW["note"] = f"blocked {nav['nearest_ahead_m']:.2f} m - waiting"
+                if time.monotonic() - blocked_since > BLOCK_GIVEUP_S:
+                    self._drive(0.0, 0.0)
+                    FOLLOW["on"] = False
+                    FOLLOW["note"] = "stopped: blocked too long"
+                continue
+
+            blocked_since = None
+            # Slow down for a shallow gap. The duty floor is not a style
+            # choice: below config.MIN_MOVE_DUTY this vehicle does not move at
+            # all, so "go slower" past that point means "stop while pretending
+            # to drive", which is worse than stopping.
+            duty = DUTY_OUTDOOR if self.env == "outdoor" else DUTY_INDOOR
+            depth = out["gap_depth_m"]
+            if depth < 1.5:
+                duty = max(config.MIN_MOVE_DUTY + 0.005, duty * 0.85)
+            self._drive(duty, steer)
+            FOLLOW["note"] = (f"gap {out['gap_deg']:.0f} deg at "
+                              f"{out['target_deg']:+.0f} deg, {depth:.1f} m")
+
+    def _scan_grid(self, scan, bins=360):
+        """Raw driver scan -> nose-referenced range grid, bin 0 straight ahead.
+
+        Same convention the recorder and reader use, so a policy sees exactly
+        the same observation live as it does in replay. If these two ever
+        disagree, everything measured offline stops applying to the car.
+        """
+        grid = [0.0] * bins
+        fwd = config.LIDAR_FORWARD_DEG
+        step = 360.0 / bins
+        for _q, ang, dmm in scan:
+            d = dmm / 1000.0
+            if d < config.LIDAR_MIN_M or d > 12.0:
+                continue
+            b = int(((ang - fwd) % 360.0) / step) % bins
+            # nearest wins: never show a policy a farther reading than the
+            # sensor actually saw
+            if grid[b] == 0.0 or d < grid[b]:
+                grid[b] = d
+        return grid
+
     def _telemetry_loop(self):
         last_tach = None; last_t = None
         while self.running:
@@ -2185,7 +2288,9 @@ class H(BaseHTTPRequestHandler):
                 pass
         if "follow" in q:
             go = q["follow"][0] == "1"
-            if go and PATH.get("cells") and HUB.mode == "navigate":
+            ready = ((HUB.mode == "navigate" and PATH.get("cells"))
+                     or HUB.mode == "gap")
+            if go and ready:
                 with C_LOCK:
                     latched = CTRL["estop"]
                     if not latched:
