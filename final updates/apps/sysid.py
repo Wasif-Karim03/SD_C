@@ -79,10 +79,21 @@ THROTTLE_DUTIES = [0.06, 0.07, 0.08, 0.09, 0.10, 0.12]
 # the instant the tachometer moves.
 BRK_START = 0.020
 BRK_STEP = 0.005
-BRK_HOLD_S = 0.35
+BRK_HOLD_S = 0.50
 BRK_REPEATS = 3
-BRK_MOVE_ERPM = 120.0    # |erpm| that counts as "turning", above sensor noise
-BRK_CONFIRM = 2          # consecutive ticks, so one noisy sample cannot trigger
+# Motion is measured as NET DISPLACEMENT, not ERPM.
+#
+# The first version used |erpm| >= 120 and reported breakaway at the very first
+# rung, 0.020 duty, on a car that visibly does not move below roughly 0.14. A
+# sensorless brushless motor at 2% duty cogs and twitches without ever
+# completing a rotation, and the VESC reports every one of those twitches as
+# ERPM. It was measuring the motor stuttering, not the vehicle moving.
+#
+# The tachometer cannot be fooled the same way: a twitch oscillates and nets to
+# zero, while a turning wheel accumulates. 2 cm is far beyond any jitter and
+# unmistakably "it moved".
+BRK_MOVE_M = 0.02
+BRK_MOVE_ERPM = 120.0    # kept only for reporting; no longer the trigger
 BRK_SETTLE_S = 2.0       # let the previous pass's wheels stop before arming
 
 # Prefixed onto every session note in --dry mode. A synthetic session sitting
@@ -391,7 +402,9 @@ def man_latency(rig, args):
 
 def man_breakaway(rig, args):
     banner("BREAKAWAY  —  the duty at which the wheels actually turn")
-    print("  Ramps duty in small steps and stops the moment the motor turns.")
+    print(f"  Ramps duty in {BRK_STEP:.3f} steps, stopping when the car has moved")
+    print(f"  {BRK_MOVE_M * 100:.0f} cm at one rung -- net wheel displacement, not ERPM,")
+    print("  because a stalled motor twitches and reports ERPM without turning.")
     print("  config.MIN_MOVE_DUTY is a GUESS; every other manoeuvre is scaled")
     print("  off it, so measuring it first is what stops a whole session of")
     print("  runs where the car never moved.\n")
@@ -421,29 +434,32 @@ def man_breakaway(rig, args):
             segs.append((BRK_HOLD_S, r, 0.0, "ramp"))
         segs.append((0.4, 0.0, 0.0, "rest"))
 
-        state = {"hits": 0, "duty": None, "armed": False}
+        counts = max(3, int(round(BRK_MOVE_M / config.METERS_PER_TACH)))
+        state = {"duty": None, "armed": False, "rung": None, "tach0": None}
 
-        def watch(tel, _st=state):
+        def watch(tel, _st=state, _n=counts):
             if _st["duty"] is not None:
                 return None
             duty = abs(tel.get("duty") or 0.0)
-            erpm = abs(tel.get("erpm") or 0.0)
+            tach = tel.get("tach")
+            if tach is None:
+                return None
             if duty < BRK_START * 0.5:
-                # in a rest phase: arm only once the motor is genuinely stopped
-                if erpm < BRK_MOVE_ERPM:
-                    _st["armed"] = True
-                _st["hits"] = 0
+                # rest phase: arm, and forget any rung baseline
+                _st["armed"] = True
+                _st["rung"] = None
                 return None
             if not _st["armed"]:
-                # never observed at rest, so any motion now is unattributable
                 return None
-            if erpm >= BRK_MOVE_ERPM:
-                _st["hits"] += 1
-                if _st["hits"] >= BRK_CONFIRM:
-                    _st["duty"] = duty
-                    return "stop"
-            else:
-                _st["hits"] = 0
+            # each rung gets its own displacement baseline, so the answer is
+            # "the car moved AT THIS DUTY", not "it has drifted since the start"
+            if _st["rung"] is None or abs(duty - _st["rung"]) > 1e-6:
+                _st["rung"] = duty
+                _st["tach0"] = tach
+                return None
+            if abs(tach - _st["tach0"]) >= _n:
+                _st["duty"] = duty
+                return "stop"
             return None
 
         rec = Recorder(note=DRY_TAG + f"sysid breakaway pass {rep + 1}"
