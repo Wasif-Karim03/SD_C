@@ -153,6 +153,14 @@ def check_web():
 
 def check_port():
     s = socket.socket()
+    # Replicate EXACTLY what the server will do. http.server sets
+    # allow_reuse_address = 1 (SO_REUSEADDR); a plain probe socket does not,
+    # so a socket left in TIME_WAIT by a cockpit you killed seconds ago fails
+    # here while the real bind would have succeeded. That false alarm sent an
+    # operator chasing a phantom process and made a perfectly good start look
+    # like a degraded one. A check that is stricter than the thing it checks
+    # is not a safety margin, it is a lie.
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     try:
         s.bind(("0.0.0.0", PORT))
         row(f"port {PORT}", "ok", "free")
