@@ -285,6 +285,62 @@ def fit_latency(sessions):
 
 
 # ------------------------------------------------------------------ report --
+# ── plausibility ─────────────────────────────────────────────────────────
+# A least-squares fit always returns numbers. Whether those numbers describe a
+# vehicle is a separate question, and the first real session answered it: six
+# throttle points spanning duty 0.145-0.200 extrapolated back to a deadband of
+# -0.37 (the car moves at negative duty), and six steering arcs driven below
+# breakaway gave a max steer angle of 0.36 deg and a 40 m turning circle for a
+# car that turns inside a metre.
+#
+# Both were printed in a PASTE-READY block, ready to be copied into config.py.
+# That is the failure mode worth engineering against: not a wrong number, but a
+# wrong number wearing the costume of a measurement.
+
+def check_throttle(fit, rows):
+    """Return a list of reasons this throttle fit should not be trusted."""
+    if not fit:
+        return ["no fit"]
+    bad = []
+    db = fit["deadband"]
+    if not (0.0 <= db <= config.MAX_DUTY):
+        bad.append(f"deadband {db:.4f} is outside [0, {config.MAX_DUTY}] -- the line "
+                   f"was extrapolated far below the sampled range")
+    if rows:
+        lo = min(r["duty"] for r in rows)
+        if lo > config.MIN_MOVE_DUTY + 0.005:
+            bad.append(f"lowest sampled duty {lo:.3f} is above breakaway "
+                       f"{config.MIN_MOVE_DUTY:.3f}: the deadband is not identifiable "
+                       f"from data that never approaches it")
+        span = max(r["v_ss"] for r in rows) - min(r["v_ss"] for r in rows)
+        if span < 0.35:
+            bad.append(f"speed varies only {span:.2f} m/s across the whole ladder; "
+                       f"the slope is not resolvable (drag-limited?)")
+    if fit["gain"] <= 0:
+        bad.append("negative gain")
+    return bad
+
+
+def check_steering(fit, rows):
+    """Return a list of reasons this steering fit should not be trusted."""
+    if not fit:
+        return ["no fit"]
+    bad = []
+    d = fit["max_steer_rad"]
+    if d < 0.05:                       # < ~3 deg: no RC car steers this little
+        bad.append(f"max steer {math.degrees(d):.2f} deg is implausibly small for a "
+                   f"1/10 car -- almost always means the car never actually drove "
+                   f"the arcs")
+    if rows:
+        om = max(abs(r["omega"]) for r in rows if r.get("omega") is not None) \
+            if any(r.get("omega") is not None for r in rows) else 0.0
+        if om < 0.15:
+            bad.append(f"peak yaw rate {om:.3f} rad/s -- the vehicle barely rotated; "
+                       f"check the drive duty was above breakaway "
+                       f"({config.MIN_MOVE_DUTY:.3f})")
+    return bad
+
+
 def report(sessions, wheelbase, manual):
     print("=" * 74)
     print("  SYSTEM IDENTIFICATION — fitted from recorded sessions")
@@ -311,6 +367,14 @@ def report(sessions, wheelbase, manual):
               f"{config.MIN_MOVE_DUTY})")
         print(f"  -> v at MAX_DUTY {config.MAX_DUTY}: "
               f"{t_fit['gain'] * (config.MAX_DUTY - t_fit['deadband']):.2f} m/s")
+    t_bad = check_throttle(t_fit, t_rows)
+    if t_fit and t_bad:
+        print("\n  !! THIS FIT IS NOT USABLE:")
+        for b in t_bad:
+            print(f"     - {b}")
+        print("     The per-duty speeds above ARE valid measurements. Only the")
+        print("     extrapolated line is not. To identify the deadband, sample")
+        print("     rungs from below breakaway upward.")
     if np.isfinite(tau):
         print(f"  -> rise time tau ~ {tau:.3f} s  (first-order lag for the sim)")
     if np.isfinite(decel):
@@ -337,6 +401,15 @@ def report(sessions, wheelbase, manual):
               f"({math.degrees(config.MAX_STEER_ANGLE_RAD):.1f} deg)")
         tight = wheelbase / math.tan(s_fit["max_steer_rad"]) if s_fit["max_steer_rad"] > 1e-6 else float("nan")
         print(f"  -> tightest turn radius ~ {tight:.2f} m")
+    s_bad = check_steering(s_fit, s_rows)
+    if s_fit and s_bad:
+        print("\n  !! THIS FIT IS NOT USABLE:")
+        for b in s_bad:
+            print(f"     - {b}")
+        print("     Note the disagreement in the table: wheel odometry reports a")
+        print("     speed while ICP reports almost no rotation. The tachometer")
+        print("     counts MOTOR turns, so it reads a stationary car as moving.")
+        print("     ICP watches the room and is the one to believe.")
 
     lat, nlat = fit_latency(sessions)
     print("\n" + "-" * 74)
@@ -360,25 +433,32 @@ def report(sessions, wheelbase, manual):
     print("\n" + "=" * 74)
     print("  PASTE-READY")
     print("=" * 74)
-    if s_fit:
-        print("  # final updates/config.py")
+    print("  # final updates/config.py")
+    if s_fit and not s_bad:
         print(f"  WHEELBASE_M = {wheelbase:.4f}            # MEASURED (tape)")
         print(f"  MAX_STEER_ANGLE_RAD = {s_fit['max_steer_rad']:.4f}    "
               f"# MEASURED ({s_fit['max_steer_deg']:.1f} deg) by apps/sysid.py")
-    if t_fit:
+    else:
+        print("  # MAX_STEER_ANGLE_RAD  -- NOT MEASURED, see the steering section")
+    if t_fit and not t_bad:
         print(f"  MIN_MOVE_DUTY = {max(t_fit['deadband'], 0.0):.4f}          "
               f"# MEASURED deadband")
         print(f"  # duty -> speed:  v_mps = {t_fit['gain']:.3f} * (duty - "
               f"{t_fit['deadband']:.4f})")
+    else:
+        print("  # MIN_MOVE_DUTY       -- NOT MEASURED, see the throttle section")
+        if t_rows:
+            pairs = ", ".join("%.3f->%.2f" % (r["duty"], r["v_ss"]) for r in t_rows)
+            print("  # the per-duty speeds ARE valid: " + pairs)
     if t_fit or s_fit:
         print("\n  # f1tenth_gym (dev-jax)")
         if np.isfinite(lat):
             print(f"  ControlConfig(throttle_delay_steps={max(1, round(lat * SIM_HZ))}, "
                   f"steer_delay_steps=<measure>)")
-        if t_fit:
+        if t_fit and not t_bad:
             print(f"  VehicleParameters(v_max={t_fit['gain'] * (config.MAX_DUTY - t_fit['deadband']):.2f}, "
                   f"m=<weigh the car>, ...)")
-        if s_fit:
+        if s_fit and not s_bad:
             print(f"  VehicleParameters(s_min={-s_fit['max_steer_rad']:.4f}, "
                   f"s_max={s_fit['max_steer_rad']:.4f}, "
                   f"lf=<measure>, lr=<measure>)   # lf+lr = {wheelbase:.4f}")
