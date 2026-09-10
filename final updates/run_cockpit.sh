@@ -46,7 +46,20 @@ echo "stopping anything already holding the hardware or port 8080 ..."
 for p in navigate_web.py mapper_web.py control_center.py cockpit.py dashboard.py mock_cockpit.py; do
   pkill -f "$p" 2>/dev/null
 done
-sleep 1
+
+# Wait for the port to ACTUALLY come free rather than assuming a fixed sleep
+# was enough. A process that is shutting down still holds its listening socket,
+# and starting on top of that is how you end up with two cockpits fighting over
+# one set of serial ports.
+for i in 1 2 3 4 5 6 7 8; do
+  if ! (exec 3<>/dev/tcp/127.0.0.1/8080) 2>/dev/null; then break; fi
+  exec 3<&- 2>/dev/null; exec 3>&- 2>/dev/null
+  if [ "$i" = "4" ]; then
+    echo "  port still held after 2 s — escalating to SIGKILL"
+    pkill -9 -f cockpit.py 2>/dev/null
+  fi
+  sleep 0.5
+done
 
 python3 preflight.py
 STATUS=$?

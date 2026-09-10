@@ -2208,16 +2208,37 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     global HUB
+    # Bind the port BEFORE opening a single serial device.
+    #
+    # The old order brought the whole Hub up first and bound afterwards, so a
+    # port already in use produced the worst possible outcome: a second process
+    # that had taken the VESC, the steering board, the LiDAR and the cameras
+    # away from the instance actually serving the UI, then died. Two cockpits,
+    # one set of hardware, and a screen showing neither. Fail before you touch
+    # anything you would have to hand back.
+    try:
+        srv = QuietServer(("0.0.0.0", HTTP_PORT), H)
+    except OSError as e:
+        print(f"\ncannot bind port {HTTP_PORT}: {e}")
+        print("something is already serving it — almost always an earlier cockpit.")
+        print("  pkill -f cockpit.py && sleep 2")
+        print("no hardware was opened, so nothing has been taken from it.")
+        return 1
+
     HUB = Hub().start()
-    srv = QuietServer(("0.0.0.0", HTTP_PORT), H)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
         print("\nstopping ...")
     finally:
         srv.shutdown()
+        # server_close() is the one that actually releases the listening
+        # socket. shutdown() only stops the accept loop, which is why a
+        # restart could still find the port taken.
+        srv.server_close()
         HUB.stop()
         print("stopped.")
+    return 0
 
 
 if __name__ == "__main__":
