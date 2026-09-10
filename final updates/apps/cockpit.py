@@ -89,6 +89,22 @@ FOLLOW_FORWARD_DEG = config.LIDAR_FORWARD_DEG
 SCAN_MAX_AGE_S = 0.6            # auto-drive refuses to move on a scan older than this
 REPLAN_EVERY_S = 1.0
 REACT_M = 1.3
+
+# ── stuck detection and the backup recovery ──────────────────────────────
+# Pure pursuit only ever drives FORWARD, and A* plans on a grid that knows
+# nothing about a car's minimum turn radius. Put those together facing a wall
+# and the car is asked to make a turn it physically cannot, forever, quietly.
+#
+# Every serious navigation stack answers this the same way -- nav2 calls it
+# BackUp -- and this car can do it more safely than most, because its LiDAR
+# sees behind it. Reversing blind would not be worth the risk; reversing with
+# a measured rear clearance is.
+STUCK_S = 2.5             # no progress toward the goal for this long
+STUCK_PROGRESS_M = 0.08   # a smaller improvement than this is noise, not progress
+REVERSE_S = 1.2           # one backup lasts this long
+REVERSE_CLEAR_M = 0.45    # required clearance behind BEFORE reversing
+REVERSE_ARC_DEG = 100.0   # the rear cone that has to be clear, total width
+MAX_RECOVERIES = 3        # then stop and say so, rather than shuffling forever
 BLOCK_GIVEUP_S = 6.0
 # Derived from the MEASURED breakaway rather than picked. Both of these used
 # to be 0.07 and 0.09 -- below config.MIN_MOVE_DUTY as measured on 2026-09-09
@@ -827,10 +843,18 @@ class Hub:
     def _follow_loop(self):
         last_plan = 0.0
         blocked_since = None
+        # recovery state
+        best_dgoal = float("inf")   # closest we have ever been to the goal
+        progress_t = 0.0            # when that last improved
+        rev_until = 0.0             # reversing until this monotonic time
+        rev_steer = 0.0
+        recoveries = 0
         while self.running:
             time.sleep(0.08)
             if not FOLLOW["on"] or self.mode != "navigate":
                 blocked_since = None
+                best_dgoal = float("inf"); progress_t = 0.0
+                rev_until = 0.0; recoveries = 0
                 continue
             with C_LOCK:
                 estop = CTRL["estop"]
@@ -854,6 +878,23 @@ class Hub:
                 FOLLOW["note"] = "stopped: lost localization"
                 continue
 
+            # ── a reverse already under way ───────────────────────────────
+            # Re-checked EVERY tick, not just at the start. Something can walk
+            # in behind the car while it is backing up, and a recovery that
+            # commits blindly for its whole duration is a recovery that
+            # reverses into a person.
+            if now < rev_until:
+                rear = self._rear_clear_m(scan)
+                if rear < REVERSE_CLEAR_M:
+                    self._drive(0.0, 0.0)
+                    rev_until = 0.0
+                    FOLLOW["note"] = f"backup stopped: {rear:.2f} m behind"
+                else:
+                    self._drive(-(config.MIN_MOVE_DUTY + 0.02), rev_steer)
+                    FOLLOW["note"] = (f"backing up {rev_until - now:.1f}s "
+                                      f"({rear:.2f} m behind)")
+                continue
+
             with S_LOCK:
                 pose = STATE.get("pose", [0.0, 0.0, 0.0])
             x, y, th = pose[0], pose[1], pose[2]
@@ -865,6 +906,15 @@ class Hub:
                 self._drive(0.0, 0.0); FOLLOW["on"] = False
                 FOLLOW["arrived"] = True; FOLLOW["note"] = "arrived"
                 print("[follow] ARRIVED.", flush=True); continue
+            # ── are we actually getting anywhere? ─────────────────────────
+            if dgoal < best_dgoal - STUCK_PROGRESS_M:
+                best_dgoal = dgoal
+                progress_t = now
+                recoveries = 0
+            elif progress_t == 0.0:
+                best_dgoal = dgoal
+                progress_t = now
+
             desired = math.atan2(ty - y, tx - x)
             car_heading = th + math.radians(FOLLOW_FORWARD_DEG)
             err = (desired - car_heading + math.pi) % (2 * math.pi) - math.pi
@@ -879,6 +929,40 @@ class Hub:
                 veto_term = nav["steer"]
                 steer = max(-1.0, min(1.0, 0.5 * steer + 0.5 * nav["steer"]))
             duty = DUTY_OUTDOOR if self.env == "outdoor" else DUTY_INDOOR
+
+            # ── stuck: no progress for a while, so try backing up ──────────
+            # Note this fires on lack of PROGRESS, not on being blocked. A car
+            # nosed into a corner is not necessarily "blocked" -- the corridor
+            # ahead may read clear while the turn it needs is tighter than the
+            # steering can make. Waiting for the blocked flag would wait
+            # forever, which is exactly what it did.
+            if progress_t and (now - progress_t) > STUCK_S:
+                if recoveries >= MAX_RECOVERIES:
+                    self._drive(0.0, 0.0); FOLLOW["on"] = False
+                    FOLLOW["note"] = (f"stopped: no progress after "
+                                      f"{MAX_RECOVERIES} backups")
+                    print("[follow] giving up: recovery exhausted.", flush=True)
+                    continue
+                rear = self._rear_clear_m(scan)
+                if rear < REVERSE_CLEAR_M:
+                    self._drive(0.0, 0.0)
+                    FOLLOW["note"] = (f"stuck, and only {rear:.2f} m behind - "
+                                      f"cannot back up")
+                    continue
+                # Reversing with the wheels turned one way swings the NOSE the
+                # other way. To bring the nose toward the target, steer against
+                # the direction pure pursuit wants. Getting this backwards
+                # turns a recovery into a way of burrowing further in.
+                rev_steer = max(-1.0, min(1.0, -steer))
+                rev_until = now + REVERSE_S
+                recoveries += 1
+                progress_t = now
+                print(f"[follow] stuck -> backup {recoveries}/{MAX_RECOVERIES} "
+                      f"(rear {rear:.2f} m)", flush=True)
+                self._drive(-(config.MIN_MOVE_DUTY + 0.02), rev_steer)
+                FOLLOW["note"] = f"backing up ({rear:.2f} m behind)"
+                continue
+
             if blocked:
                 self._drive(0.0, steer)
                 blocked_since = blocked_since or now
@@ -905,7 +989,13 @@ class Hub:
                                    "steer_pursuit": round(pursuit_term, 3),
                                    "steer_veto": (round(veto_term, 3)
                                                   if veto_term is not None else 0.0),
-                                   "icp_fail": getattr(self.loc, "fails", None)}
+                                   "icp_fail": getattr(self.loc, "fails", None),
+                                   "reversing": now < rev_until,
+                                   "recoveries": recoveries,
+                                   "rear_m": (None if not scan else
+                                              (lambda r: None if r == float("inf")
+                                               else round(r, 2))(
+                                                  self._rear_clear_m(scan)))}
 
     # ------------------------------------------------------------------ #
     #  telemetry
@@ -989,6 +1079,27 @@ class Hub:
             self._drive(duty, steer)
             FOLLOW["note"] = (f"gap {out['gap_deg']:.0f} deg at "
                               f"{out['target_deg']:+.0f} deg, {depth:.1f} m")
+
+    def _rear_clear_m(self, scan):
+        """Nearest return in the rear cone, metres. inf when nothing is there.
+
+        The LidarNavigator only ever looks forward, which is correct for
+        deciding whether to drive on and useless for deciding whether it is
+        safe to back up. Same scan, opposite cone.
+        """
+        if not scan:
+            return 0.0          # no scan is not "clear", it is "unknown"
+        rear = (config.LIDAR_FORWARD_DEG + 180.0) % 360.0
+        half = REVERSE_ARC_DEG / 2.0
+        best = float("inf")
+        for _q, ang, dmm in scan:
+            d = dmm / 1000.0
+            if d < config.LIDAR_MIN_M or d > 6.0:
+                continue
+            off = abs(((ang - rear + 180.0) % 360.0) - 180.0)
+            if off <= half and d < best:
+                best = d
+        return best
 
     def _scan_grid(self, scan, bins=360):
         """Raw driver scan -> nose-referenced range grid, bin 0 straight ahead.
